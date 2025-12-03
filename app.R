@@ -370,8 +370,8 @@ ui <- fluidPage(
                    br(),
                    fluidRow(
                      column(3, div(class = "panel", style = "padding: 15px; text-align: center;", actionButton("nav_gene_viewer", label = tagList(h4(icon("dna"), "Gene Expression Viewer")), width = "100%"), p("Visualize the expression of individual genes."))),
-                     column(3, div(class = "panel", style = "padding: 15px; text-align: center;", actionButton("nav_multi_omics", label = tagList(h4(icon("sitemap"), "Multi-Omics Browser")), width = "100%"), p("Explore differential expression and enrichment results."))),
-                     column(3, div(class = "panel", style = "padding: 15px; text-align: center;", actionButton("nav_mofa", label = tagList(h4(icon("project-diagram"), "MOFA Browser")), width = "100%"), p("Deconvolve multi-omic variability."))),
+                     column(3, div(class = "panel", style = "padding: 15px; text-align: center;", actionButton("nav_multi_omics", label = tagList(h4(icon("chart-bar"), "Multi-Omics Browser")), width = "100%"), p("Explore differential expression and enrichment results."))),
+                     column(3, div(class = "panel", style = "padding: 15px; text-align: center;", actionButton("nav_mofa", label = tagList(h4(icon("layer-group"), "MOFA Browser")), width = "100%"), p("Deconvolve multi-omic variability."))),
                      column(3, div(class = "panel", style = "padding: 15px; text-align: center;", actionButton("nav_about", label = tagList(h4(icon("info-circle"), "About")), width = "100%"), p("Learn more about the project and data.")))
                    )
                  )
@@ -392,7 +392,7 @@ ui <- fluidPage(
                        checkboxInput("show_ubi", "Ubiquitome", value = TRUE),
                        
                        hr(),
-                       helpText("Select a gene to view its expression. Use checkboxes to toggle data types. Significant stars refer to the adjusted p-value compared to WT")
+                       helpText("Select a gene to view its expression. Use checkboxes to toggle data types. Significant stars refer to the adjusted p-value compared to WT.")
                      ),
                      
                      # --- UI UPDATED HERE ---
@@ -860,13 +860,9 @@ server <- function(input, output, session) {
         entrez_ids <- bitr(gene_list, fromType = "SYMBOL", toType = "ENTREZID", OrgDb = org.Hs.eg.db)$ENTREZID
         if (length(entrez_ids) == 0) return(NULL)
         
+        # --- CUSTOM UNIVERSE LOGIC REMOVED ---
+        # The universe_ids variable will remain NULL
         universe_ids <- NULL
-        if (omics == "Proteome" || omics == "Ubiquitome" || (omics == "Transcriptome" && bg_select == "MGH")) {
-          if (omics == "Transcriptome") all_genes <- rownames(DEG_list_MGH[[1]])
-          if (omics == "Proteome") all_genes <- rowData(dep_MGH)$name
-          if (omics == "Ubiquitome") all_genes <- rowData(Ubi_dep_MGH)$name
-          universe_ids <- bitr(all_genes, fromType="SYMBOL", toType="ENTREZID", OrgDb="org.Hs.eg.db")$ENTREZID
-        } 
         
         enrichGO(gene = entrez_ids, universe = universe_ids, OrgDb = org.Hs.eg.db, 
                  ont = ont_selection, # Use the selection from the UI
@@ -911,22 +907,7 @@ server <- function(input, output, session) {
       list(upregulated = go_up, downregulated = go_down)
     })
   })
-  # --- This entire block REPLACES the old "output$go_plot" ---
-  
-  # 1. New plot output for UPREGULATED terms
-  # --- This entire block REPLACES the old "output$go_plot_up" ---
-  
-  # 1. New plot output for UPREGULATED terms (now in Red)
-  # --- This entire block REPLACES the old "output$go_plot_combined" ---
-  
-  # --- Helper function for GO plots (to avoid repeating code) ---
-  # --- Helper function for GO plots (to avoid repeating code) ---
-  # --- Helper function for GO plots (AESTHETICS UPDATED) ---
-  # --- Helper function for GO/Enrichment plots ---
-  # --- Helper function for GO/Enrichment plots ---
-  # --- Helper function for GO/Enrichment plots ---
-  # --- Helper function for GO/Enrichment plots ---
-  # --- Helper function for GO/Enrichment plots ---
+
   create_go_barplot <- function(results_df, direction_label, global_plot_limit) {
     
     color_palette <- if (direction_label == "Overlapping Downregulation") "Blues" else "Reds"
