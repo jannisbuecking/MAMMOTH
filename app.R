@@ -35,7 +35,7 @@ library(cowplot)              # For MOFA GSEA
 library(pheatmap)             # For MOFA Heatmaps
 library(arrow)
 
-mammoth_icon_url <- "https://cdn-icons-png.flaticon.com/512/1888/1888595.png"
+mammoth_icon_url <- "mammoth_icon2.png"
 
 # --- 1. Load Data (Executed once when the app starts) ---
 data_loaded_flag <- FALSE
@@ -108,7 +108,7 @@ tryCatch({
   if (exists("dds_RNA") && is(dds_RNA, "DESeqDataSet") && "background" %in% colnames(colData(dds_RNA))) {
     dds_RNA_8330 <- dds_RNA[, dds_RNA$background == "8330"]; dds_RNA_MGH <- dds_RNA[, dds_RNA$background == "MGH"]
     colData(dds_RNA_8330)$condition <- colData(dds_RNA_8330)$genotype; colData(dds_RNA_MGH)$condition <- colData(dds_RNA_MGH)$genotype
-    master_condition_order <- levels(colData(dds_RNA_8330)$condition)
+    master_condition_order <- c("DelC", "DupC", "HetDel", "HomoDel", "PWSTI", "PWSTII", "WT")
     available_conditions <- master_condition_order
     rna_data_prepared <- TRUE
   }
@@ -268,6 +268,35 @@ plotAbundance <- function(data, GOI, dep_results, ref_group = "WT",
   }
   
   return(p)
+}
+
+
+find_best_match <- function(target_gene, feature_list) {
+  if (is.null(target_gene) || target_gene == "") return(target_gene)
+  
+  # 1. Exact match check (Quickest)
+  if (target_gene %in% feature_list) return(target_gene)
+  
+  # 2. Candidate search: Find all rows that purely CONTAIN the string (e.g., "CALM1")
+  # We use fixed = TRUE to be fast and safe (avoids regex errors with special chars)
+  candidates <- grep(target_gene, feature_list, value = TRUE, fixed = TRUE)
+  
+  if (length(candidates) == 0) return(target_gene) # No potential matches
+  
+  # 3. Verification: Split candidates by ";" and check for exact token match
+  # This distinguishes "CALM1" from "CALM12" inside a string like "AB;CALM12;XY"
+  for (cand in candidates) {
+    # Split "A; B; C" into c("A", "B", "C") and remove whitespace
+    tokens <- trimws(unlist(strsplit(cand, ";")))
+    
+    # Check if our gene is exactly one of these tokens (ignoring case)
+    if (tolower(target_gene) %in% tolower(tokens)) {
+      return(cand) # Found the correct group! e.g., "CALM1;CALM2;CALM3"
+    }
+  }
+  
+  # 4. Fallback
+  return(target_gene)
 }
 
 # --- 3. UI DEFINITION ---
@@ -594,7 +623,7 @@ ui <- fluidPage(
                      column(8,
                             h4("General Information"),
                             p("The MAGEL2 Multi-Omics Targeting Hubs (MAMOTH) application is an interactive, open-access web portal developed to empower the research community and facilitate the exploration of this complex dataset. It provides complete and user-friendly access to the entire transcriptome, proteome, and ubiquitinome datasets presented in the study, enabling researchers to independently visualize findings, test novel hypotheses, and accelerate progress in understanding the molecular basis of MAGEL2-related neurodevelopmental disorders."),
-                            p("The data originates from a comprehensive multi-omics analysis of CRISPR/Cas9-engineered isogenic human pluripotent stem cell (hiPSC)-derived cortical neurons published in in Buecking et al., 2025 preprint."),
+                            p("The data originates from a comprehensive multi-omics analysis of CRISPR/Cas9-engineered isogenic human pluripotent stem cell (hiPSC)-derived cortical neurons published in the Buecking et al., 2025 preprint."),
                             
                             h4("Background"),
                             p("Variants in the gene MAGEL2 are associated with the severe neurodevelopmental disorders Prader-Willi Syndrome (PWS) and the more severe Schaaf-Yang Syndrome (SYS), yet the underlying molecular pathophysiology in the human brain remains poorly understood. Despite known links to processes like endosomal trafficking and protein ubiquitination, the specific role of MAGEL2 in human cortical neurons during critical developmental stages has been unclear."),
@@ -606,10 +635,8 @@ ui <- fluidPage(
                             p(HTML("<strong>Lab Website:</strong> <a href='https://www.klinikum.uni-heidelberg.de/humangenetik/forschung/ag-laugsch' target='_blank'>Laugsch Lab</a>")),
                             
                             h4("Funding"),
-                            p("This project was funded by the Foundation for Prader-Willi Research (FPWR)."),
-                            
-                            h4("Credits"),
-                            p(HTML("Mammoth icon created by <a href='https://www.flaticon.com/free-icons/mammoth' title='mammoth icons'>Freepik - Flaticon</a>."))
+                            p("This project was funded by the Foundation for Prader-Willi Research (FPWR).")
+                      
                      )
                    )
                  )
@@ -650,14 +677,34 @@ server <- function(input, output, session) {
   
   plot_colors <- tryCatch({ gg_color_hue(2) }, error = function(e) { c("grey80", "grey70") })
   my_color_8330 <- plot_colors[1]; my_color_MGH <- plot_colors[2]
+  # --- UPDATED render_abundance_plot FUNCTION ---
+  # --- UPDATED render_abundance_plot (Section 4) ---
   render_abundance_plot <- function(data_obj, dep_results_obj, color, label, star_sz = 6, star_v = -0.5, plot_subtitle = "") {
     renderPlot({
-      validate(need(data_loaded_flag, "Waiting for data..."), need(!is.null(master_condition_order), "Condition order not set."),
+      validate(need(data_loaded_flag, "Waiting for data..."), 
+               need(!is.null(master_condition_order), "Condition order not set."),
                need(!is.null(data_obj), paste(plot_subtitle,"-",label,"data object not loaded.")))
-      selected_goi <- input$goi; validate(need(selected_goi, "Please select a GOI."))
-      plotAbundance(data=data_obj, GOI=selected_goi, dep_results=dep_results_obj, ref_group="WT",
-                    plot_color=color, data_source_label=plot_subtitle, master_order=master_condition_order,
-                    star_size=star_sz, star_vjust=star_v)
+      
+      selected_goi <- input$goi
+      validate(need(selected_goi, "Please select a GOI."))
+      
+      # --- ROBUST LOOKUP LOGIC ---
+      # 1. Get all row names from the data object
+      current_features <- rownames(data_obj)
+      
+      # 2. Find the correct name (e.g., convert "CALM1" -> "CALM1;CALM2;CALM3")
+      resolved_feature_name <- find_best_match(selected_goi, current_features)
+      
+      # 3. Pass the RESOLVED name to the plotter
+      plotAbundance(data=data_obj, 
+                    GOI=resolved_feature_name, 
+                    dep_results=dep_results_obj, 
+                    ref_group="WT",
+                    plot_color=color, 
+                    data_source_label=plot_subtitle, 
+                    master_order=master_condition_order,
+                    star_size=star_sz, 
+                    star_vjust=star_v)
     })
   }
   output$plotProt8330 <- render_abundance_plot(new_data_imp_8330, dep_8330, my_color_8330, "Prot 8330", plot_subtitle="Proteome")
