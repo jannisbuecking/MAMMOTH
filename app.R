@@ -147,11 +147,25 @@ heatmap_colors <- colorRampPalette(rev(brewer.pal(n = 10, name = "RdBu")))(100)
 font_color_dark <- "#545252"
 view_labeller <- c(`protein` = "Proteome", `RNA` = "Transcriptome", `Ubiq` = "Ubiquitome")
 
+# Color scheme for 7 genotypes
+gg_color_hue <- function(n) {
+  hues = seq(15, 375, length = n + 1)
+  hcl(h = hues, l = 65, c = 100)[1:n]
+}
+
+# Define the specific mapping for your 7 genotypes
+# This ensures DelC is always the first color, DupC the second, etc.
+genotype_colors <- setNames(
+  gg_color_hue(7), 
+  c("DelC", "DupC", "HetDel", "HomoDel", "PWSTI", "PWSTII", "WT")
+)
+
 # General Helper Functions
 format_feature_names <- function(feature_vector) { gsub("_RNA|_protein|_ubiq|_Ubiq", "", feature_vector) }
 gg_color_hue <- function(n) { hues = seq(15, 375, length = n + 1); hcl(h = hues, l = 65, c = 100)[1:n] }
 get_significance_label <- function(p_adj) { if (is.na(p_adj)) { return("") } else if (p_adj <= 0.0001) { return("****") } else if (p_adj <= 0.001) { return("***") } else if (p_adj <= 0.01) { return("**") } else if (p_adj <= 0.05) { return("*") } else { return("ns") } }
 custom_density <- function(data, mapping, ...) { ggplot(data = data, mapping = mapping) + geom_density(aes(color = !!mapping$colour, fill = !!mapping$colour), alpha = 0.5) + theme(panel.grid = element_blank()) }
+
 plotAbundance <- function(data, GOI, dep_results, ref_group = "WT",
                           plot_color = "grey80", data_source_label = "",
                           master_order,
@@ -161,7 +175,7 @@ plotAbundance <- function(data, GOI, dep_results, ref_group = "WT",
     return(ggplot() + theme_void() + 
              annotate("text", x=0.5, y=0.5, label="Gene not found\nin this dataset", size = 6, color = "#545252") + 
              ggtitle(GOI) + labs(subtitle=NULL) +
-             theme(plot.title = element_text(hjust = 0.5, color = "#545252"))) # Add theme here too
+             theme(plot.title = element_text(hjust = 0.5, color = "#545252"))) 
   }
   
   if (inherits(data, "DESeqDataSet")) {
@@ -222,40 +236,44 @@ plotAbundance <- function(data, GOI, dep_results, ref_group = "WT",
   }
   annotation_df <- bind_rows(annotation_info)
   
+  # --- UPDATED PLOTTING LOGIC ---
   p <- ggplot(plot_df, aes(x = condition, y = expression)) +
-    geom_jitter(color = plot_color, width = 0.2, size = 3, alpha = 0.7) +
-    stat_summary(fun.data = mean_sdl, fun.args = list(mult = 1), 
-                 geom = "errorbar", width = 0.2, color = plot_color) +
-    stat_summary(fun = mean, geom = "crossbar", width = 0.4, color = plot_color) +
-    scale_x_discrete(drop = FALSE) +
     
-    # --- LABS UPDATED ---
-    labs(title = GOI, subtitle = NULL, y = y_axis_label, x = NULL) + # Subtitle removed
+    # 1. Map color to condition here
+    geom_jitter(aes(color = condition), width = 0.2, size = 5, alpha = 0.7) +
+    
+    # 2. Set summary stats to dark grey (#545252) to contrast with colored points
+    stat_summary(fun.data = mean_sdl, fun.args = list(mult = 1), 
+                 geom = "errorbar", width = 0.2, color = "#545252") +
+    stat_summary(fun = mean, geom = "crossbar", width = 0.4, color = "#545252") +
+    
+    # 3. Apply the specific genotype color palette
+    scale_color_manual(values = genotype_colors) +
+    
+    scale_x_discrete(drop = FALSE) +
+    labs(title = GOI, subtitle = NULL, y = y_axis_label, x = NULL) + 
     
     theme_bw(base_size = 16) +
-    
-    # --- THEME UPDATED ---
     theme(
       text = element_text(color = "#545252"), 
       axis.text = element_text(color = "#545252"),
       axis.ticks = element_line(color = "#545252"), 
       axis.title.y = element_text(size = 12, color = "#545252"),
       panel.border = element_blank(),
-      axis.line.x = element_line(color = "#545252"), # Color updated
-      axis.line.y = element_line(color = "#545252"), # Color updated
-      legend.position = "none",
-      plot.title = element_text(hjust = 0.5, face = "bold", color = "#545252"), # Color added
-      plot.subtitle = element_text(hjust = 0.5, color = "#545252"), # Color added
+      axis.line.x = element_line(color = "#545252"), 
+      axis.line.y = element_line(color = "#545252"), 
+      legend.position = "none", # Legend hidden as x-axis labels are sufficient
+      plot.title = element_text(hjust = 0.5, face = "bold", color = "#545252"), 
+      plot.subtitle = element_text(hjust = 0.5, color = "#545252"), 
       axis.text.x = element_text(angle = 45, hjust = 1),
       panel.grid.major = element_blank(), 
       panel.grid.minor = element_blank(),
       plot.margin = margin(t = 20, r = 5, b = 5, l = 5, "pt")
     )
-  # --- END OF THEME UPDATE ---
   
   if (nrow(annotation_df) > 0) {
     p <- p + geom_text(data = annotation_df, aes(x = condition, y = y_pos, label = label), 
-                       inherit.aes = FALSE, size = star_size, vjust = star_vjust, color = "#545252") # Color added
+                       inherit.aes = FALSE, size = star_size, vjust = star_vjust, color = "#545252")
   }
   
   min_y <- min(plot_df$expression, na.rm = TRUE)
@@ -677,8 +695,7 @@ server <- function(input, output, session) {
   
   plot_colors <- tryCatch({ gg_color_hue(2) }, error = function(e) { c("grey80", "grey70") })
   my_color_8330 <- plot_colors[1]; my_color_MGH <- plot_colors[2]
-  # --- UPDATED render_abundance_plot FUNCTION ---
-  # --- UPDATED render_abundance_plot (Section 4) ---
+
   render_abundance_plot <- function(data_obj, dep_results_obj, color, label, star_sz = 6, star_v = -0.5, plot_subtitle = "") {
     renderPlot({
       validate(need(data_loaded_flag, "Waiting for data..."), 
