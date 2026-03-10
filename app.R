@@ -6,7 +6,6 @@ library(openxlsx)
 library(shinythemes)
 library(DESeq2)
 #library(bslib)                
-library(msigdbr)              # Add this line
 library(ggplot2)
 library(ggrepel)
 library(dplyr)
@@ -18,129 +17,271 @@ library(forcats)
 #library(patchwork)
 library(SummarizedExperiment)
 #library(ggpubr)
-library(org.Hs.eg.db)
 #library(annotate)
 #library(AnnotationHub)
 #library(grid)
 #library(Homo.sapiens)
-library(clusterProfiler)
-library(MOFA2)              # For MOFA
 library(tibble)               # For MOFA
 #library(viridis)              # For MOFA
-library(GGally)               # For MOFA
 library(RColorBrewer)         # For MOFA
 library(rlang)                # For MOFA
-library(gprofiler2)           # For MOFA GSEA
-library(cowplot)              # For MOFA GSEA
 #library(pheatmap)             # For MOFA Heatmaps
-library(arrow)
 
 mammoth_icon_url <- "mammoth_icon2.png"
 
-# --- 1. Load Data (Executed once when the app starts) ---
+# --- 1. Load Data Lazily (Only when the relevant tab needs it) ---
 data_loaded_flag <- FALSE
 rna_data_prepared <- FALSE
 mofa_data_loaded <- FALSE
-available_gois <- c("Loading...")
-master_condition_order <- NULL
-available_conditions <- c()
+secondary_data_loaded <- FALSE
+available_gois <- character(0)
+master_condition_order <- c("DelC", "DupC", "HetDel", "HomoDel", "PWSTI", "PWSTII", "WT")
+available_conditions <- master_condition_order
 
-tryCatch({
-  message("Loading data from fast .arrow files...")
-  
-  # --- Helper function to reassemble SummarizedExperiment objects ---
-  reassemble_se <- function(name_prefix) {
-    row_data_df <- read_feather(file.path("data_arrow", paste0(name_prefix, "_rowData.arrow")))
-    col_data_df <- read_feather(file.path("data_arrow", paste0(name_prefix, "_colData.arrow")))
-    assay_df <- read_feather(file.path("data_arrow", paste0(name_prefix, "_assay.arrow")))
-    
-    # Restore rownames from the saved columns
-    row_data_df <- column_to_rownames(row_data_df, "feature_id")
-    col_data_df <- column_to_rownames(col_data_df, "sample_id")
-    assay_matrix <- as.matrix(column_to_rownames(assay_df, "feature_id"))
-    
-    SummarizedExperiment(
-      assays = list(counts = assay_matrix),
-      rowData = row_data_df,
-      colData = col_data_df
-    )
+.core_data_cache <- new.env(parent = emptyenv())
+.secondary_data_cache <- new.env(parent = emptyenv())
+.gene_mapping_cache <- new.env(parent = emptyenv())
+.volcano_cache <- new.env(parent = emptyenv())
+.mofa_cache <- new.env(parent = emptyenv())
+.msigdb_cache <- new.env(parent = emptyenv())
+
+cache_get <- function(cache_env, key, default = NULL) {
+  if (exists(key, envir = cache_env, inherits = FALSE)) {
+    get(key, envir = cache_env, inherits = FALSE)
+  } else {
+    default
   }
+}
+
+reassemble_se <- function(name_prefix) {
+  row_data_df <- arrow::read_feather(file.path("data_arrow", paste0(name_prefix, "_rowData.arrow")))
+  col_data_df <- arrow::read_feather(file.path("data_arrow", paste0(name_prefix, "_colData.arrow")))
+  assay_df <- arrow::read_feather(file.path("data_arrow", paste0(name_prefix, "_assay.arrow")))
   
-  # --- Reassemble all main data objects ---
-  # Result objects (for p-values and volcano plots)
-  dep_8330 <- reassemble_se("dep_8330")
-  dep_MGH <- reassemble_se("dep_MGH")
-  Ubi_dep_8330 <- reassemble_se("ubi_dep_8330")
-  Ubi_dep_MGH <- reassemble_se("ubi_dep_MGH")
+  row_data_df <- column_to_rownames(row_data_df, "feature_id")
+  col_data_df <- column_to_rownames(col_data_df, "sample_id")
+  assay_matrix <- as.matrix(column_to_rownames(assay_df, "feature_id"))
   
-  # --- ADDED THESE FOUR LINES TO LOAD THE _imp_ OBJECTS ---
-  # Raw data objects (for gene expression plots)
-  new_data_imp_8330 <- reassemble_se("new_data_imp_8330")
-  new_data_imp_MGH <- reassemble_se("new_data_imp_MGH")
-  Ubi_data_imp_8330 <- reassemble_se("Ubi_data_imp_8330")
-  Ubi_data_imp_MGH <- reassemble_se("Ubi_data_imp_MGH")
-  
-  # --- Reassemble the main DESeqDataSet object ---
-  counts_df_rna <- read_feather("data_arrow/dds_RNA_assay.arrow")
-  col_data_df_rna <- read_feather("data_arrow/dds_RNA_colData.arrow")
-  row_data_df_rna <- read_feather("data_arrow/dds_RNA_rowData.arrow")
-  
-  counts_matrix_rna <- as.matrix(column_to_rownames(counts_df_rna, "feature_id"))
-  col_data_rna <- column_to_rownames(col_data_df_rna, "sample_id")
-  row_data_rna <- column_to_rownames(row_data_df_rna, "feature_id")
-  
-  dds_RNA <- DESeqDataSetFromMatrix(
-    countData = counts_matrix_rna, colData = col_data_rna, design = ~ 1
+  SummarizedExperiment(
+    assays = list(counts = assay_matrix),
+    rowData = row_data_df,
+    colData = col_data_df
   )
-  
-  # --- THIS WAS THE BUGGY LINE - NOW CORRECTED ---
-  # We use rowData()<- instead of the incorrect mcols()<- approach
-  rowData(dds_RNA) <- DataFrame(row_data_rna)
-  
-  # --- Load smaller list and MOFA objects from consolidated file ---
-  load("secondary_data.RData")
-  data_loaded_flag <- TRUE
-  
-  if (exists("dds_RNA") && is(dds_RNA, "DESeqDataSet")) {
-    available_gois <- sort(unique(rownames(dds_RNA)))
-  } else { available_gois <- c("Transcriptome Data Error"); data_loaded_flag <- FALSE }
-  
-  if (exists("dds_RNA") && is(dds_RNA, "DESeqDataSet") && "background" %in% colnames(colData(dds_RNA))) {
-    dds_RNA_8330 <- dds_RNA[, dds_RNA$background == "8330"]; dds_RNA_MGH <- dds_RNA[, dds_RNA$background == "MGH"]
-    colData(dds_RNA_8330)$condition <- colData(dds_RNA_8330)$genotype; colData(dds_RNA_MGH)$condition <- colData(dds_RNA_MGH)$genotype
-    master_condition_order <- c("DelC", "DupC", "HetDel", "HomoDel", "PWSTI", "PWSTII", "WT")
-    available_conditions <- master_condition_order
-    rna_data_prepared <- TRUE
+}
+
+ensure_core_data_loaded <- function() {
+  if (isTRUE(data_loaded_flag)) {
+    return(TRUE)
   }
   
-  # MOFA metadata wrangling
-  MOFA_out@samples_metadata <- MOFA_out@samples_metadata %>%
+  loaded_successfully <- tryCatch({
+    message("Loading core Arrow datasets on demand...")
+    
+    assign("dep_8330", reassemble_se("dep_8330"), envir = .core_data_cache)
+    assign("dep_MGH", reassemble_se("dep_MGH"), envir = .core_data_cache)
+    assign("Ubi_dep_8330", reassemble_se("ubi_dep_8330"), envir = .core_data_cache)
+    assign("Ubi_dep_MGH", reassemble_se("ubi_dep_MGH"), envir = .core_data_cache)
+    
+    assign("new_data_imp_8330", reassemble_se("new_data_imp_8330"), envir = .core_data_cache)
+    assign("new_data_imp_MGH", reassemble_se("new_data_imp_MGH"), envir = .core_data_cache)
+    assign("Ubi_data_imp_8330", reassemble_se("Ubi_data_imp_8330"), envir = .core_data_cache)
+    assign("Ubi_data_imp_MGH", reassemble_se("Ubi_data_imp_MGH"), envir = .core_data_cache)
+    
+    counts_df_rna <- arrow::read_feather("data_arrow/dds_RNA_assay.arrow")
+    col_data_df_rna <- arrow::read_feather("data_arrow/dds_RNA_colData.arrow")
+    row_data_df_rna <- arrow::read_feather("data_arrow/dds_RNA_rowData.arrow")
+    
+    counts_matrix_rna <- as.matrix(column_to_rownames(counts_df_rna, "feature_id"))
+    col_data_rna <- column_to_rownames(col_data_df_rna, "sample_id")
+    row_data_rna <- column_to_rownames(row_data_df_rna, "feature_id")
+    
+    dds_RNA <- DESeqDataSetFromMatrix(
+      countData = counts_matrix_rna,
+      colData = col_data_rna,
+      design = ~ 1
+    )
+    rowData(dds_RNA) <- DataFrame(row_data_rna)
+    
+    assign("dds_RNA", dds_RNA, envir = .core_data_cache)
+    
+    if ("background" %in% colnames(colData(dds_RNA))) {
+      dds_RNA_8330 <- dds_RNA[, dds_RNA$background == "8330"]
+      dds_RNA_MGH <- dds_RNA[, dds_RNA$background == "MGH"]
+      colData(dds_RNA_8330)$condition <- colData(dds_RNA_8330)$genotype
+      colData(dds_RNA_MGH)$condition <- colData(dds_RNA_MGH)$genotype
+      assign("dds_RNA_8330", dds_RNA_8330, envir = .core_data_cache)
+      assign("dds_RNA_MGH", dds_RNA_MGH, envir = .core_data_cache)
+      rna_data_prepared <<- TRUE
+    }
+    
+    available_gois <<- sort(unique(rownames(dds_RNA)))
+    data_loaded_flag <<- TRUE
+    message("Core datasets loaded successfully.")
+    TRUE
+  }, error = function(e) {
+    warning("Error during core data loading: ", e$message)
+    FALSE
+  })
+  
+  loaded_successfully
+}
+
+prepare_mofa_metadata <- function(mofa_object) {
+  mofa_object@samples_metadata <- mofa_object@samples_metadata %>%
     mutate(
-      Background = str_extract(sample, "(?<=_)(8330|MGH)"), Background = factor(Background),
+      Background = str_extract(sample, "(?<=_)(8330|MGH)"),
+      Background = factor(Background),
       MutationPrefix = str_extract(sample, "^[A-Za-z]+"),
       Mutation = case_when(
-        MutationPrefix == "WT" ~ "WT", MutationPrefix == "DelC" ~ "DelC",
-        MutationPrefix == "DupC" ~ "DupC", MutationPrefix == "HetDel" ~ "HetDel",
-        MutationPrefix == "HomoDel" ~ "HomoDel", MutationPrefix == "PWSTI" ~ "PWSTI",
-        MutationPrefix == "PWSTII" ~ "PWSTII", TRUE ~ MutationPrefix
+        MutationPrefix == "WT" ~ "WT",
+        MutationPrefix == "DelC" ~ "DelC",
+        MutationPrefix == "DupC" ~ "DupC",
+        MutationPrefix == "HetDel" ~ "HetDel",
+        MutationPrefix == "HomoDel" ~ "HomoDel",
+        MutationPrefix == "PWSTI" ~ "PWSTI",
+        MutationPrefix == "PWSTII" ~ "PWSTII",
+        TRUE ~ MutationPrefix
       ),
-      Mutation = factor(Mutation, levels = c("DelC", "DupC", "HetDel", "HomoDel", "PWSTI", "PWSTII", "WT")),
+      Mutation = factor(Mutation, levels = master_condition_order),
       Mutation_BG = paste0(Mutation, "_", Background)
-    ) %>% mutate(group = Mutation) %>% dplyr::select(-MutationPrefix)
-  if (!identical(rownames(MOFA_out@samples_metadata), MOFA_out@samples_metadata$sample)) {
-    rownames(MOFA_out@samples_metadata) <- MOFA_out@samples_metadata$sample
-  }
-  mofa_data_loaded <- TRUE
-  message("All data loaded and reassembled successfully.")
+    ) %>%
+    mutate(group = Mutation) %>%
+    dplyr::select(-MutationPrefix)
   
-}, error = function(e) {
-  warning("Error during data loading: ", e$message)
-})
+  if (!identical(rownames(mofa_object@samples_metadata), mofa_object@samples_metadata$sample)) {
+    rownames(mofa_object@samples_metadata) <- mofa_object@samples_metadata$sample
+  }
+  
+  mofa_object
+}
+
+ensure_secondary_data_loaded <- function(include_mofa = FALSE) {
+  if (!isTRUE(secondary_data_loaded)) {
+    loaded_successfully <- tryCatch({
+      message("Loading secondary data on demand...")
+      loadNamespace("MOFA2")
+      load("secondary_data.RData", envir = .secondary_data_cache)
+      secondary_data_loaded <<- TRUE
+      message("Secondary data loaded successfully.")
+      TRUE
+    }, error = function(e) {
+      warning("Error during secondary data loading: ", e$message)
+      FALSE
+    })
+    
+    if (!loaded_successfully) {
+      return(FALSE)
+    }
+  }
+  
+  if (isTRUE(include_mofa) && !isTRUE(mofa_data_loaded)) {
+    if (!exists("MOFA_out", envir = .secondary_data_cache, inherits = FALSE)) {
+      warning("MOFA_out was not found in secondary_data.RData")
+      return(FALSE)
+    }
+    
+    mofa_object <- get("MOFA_out", envir = .secondary_data_cache, inherits = FALSE)
+    mofa_object <- prepare_mofa_metadata(mofa_object)
+    assign("MOFA_out", mofa_object, envir = .secondary_data_cache)
+    assign(
+      "dimensions",
+      list(
+        N_FACTORS = tryCatch(MOFA2::get_dimensions(mofa_object)$K, error = function(e) 15),
+        VIEWS = tryCatch(MOFA2::views_names(mofa_object), error = function(e) c("RNA", "protein", "Ubiq"))
+      ),
+      envir = .mofa_cache
+    )
+    mofa_data_loaded <<- TRUE
+  }
+  
+  TRUE
+}
+
+get_core_object <- function(object_name) {
+  if (!isTRUE(ensure_core_data_loaded())) {
+    stop("Core data could not be loaded.")
+  }
+  get(object_name, envir = .core_data_cache, inherits = FALSE)
+}
+
+get_secondary_object <- function(object_name) {
+  include_mofa <- identical(object_name, "MOFA_out")
+  if (!isTRUE(ensure_secondary_data_loaded(include_mofa = include_mofa))) {
+    stop("Secondary data could not be loaded.")
+  }
+  get(object_name, envir = .secondary_data_cache, inherits = FALSE)
+}
+
+get_mofa_dimensions <- function() {
+  if (isTRUE(ensure_secondary_data_loaded(include_mofa = TRUE))) {
+    return(cache_get(.mofa_cache, "dimensions", list(N_FACTORS = 15, VIEWS = c("RNA", "protein", "Ubiq"))))
+  }
+  
+  list(N_FACTORS = 15, VIEWS = c("RNA", "protein", "Ubiq"))
+}
+
+map_symbols_to_entrez <- function(gene_list) {
+  genes <- unique(stats::na.omit(gene_list))
+  if (length(genes) == 0) {
+    return(character(0))
+  }
+  
+  missing_genes <- genes[!vapply(genes, exists, logical(1), envir = .gene_mapping_cache, inherits = FALSE)]
+  if (length(missing_genes) > 0) {
+    mapping_df <- tryCatch({
+      clusterProfiler::bitr(
+        missing_genes,
+        fromType = "SYMBOL",
+        toType = "ENTREZID",
+        OrgDb = org.Hs.eg.db::org.Hs.eg.db
+      )
+    }, error = function(e) {
+      warning("Error during gene ID mapping: ", e$message)
+      data.frame(SYMBOL = character(0), ENTREZID = character(0))
+    })
+    
+    if (nrow(mapping_df) > 0) {
+      mapping_df <- mapping_df %>% distinct(SYMBOL, .keep_all = TRUE)
+      for (row_idx in seq_len(nrow(mapping_df))) {
+        assign(mapping_df$SYMBOL[[row_idx]], mapping_df$ENTREZID[[row_idx]], envir = .gene_mapping_cache)
+      }
+    }
+    
+    unresolved_genes <- setdiff(missing_genes, mapping_df$SYMBOL)
+    for (gene_name in unresolved_genes) {
+      assign(gene_name, NA_character_, envir = .gene_mapping_cache)
+    }
+  }
+  
+  mapped_ids <- unname(vapply(genes, function(gene_name) {
+    get(gene_name, envir = .gene_mapping_cache, inherits = FALSE)
+  }, character(1)))
+  
+  unique(stats::na.omit(mapped_ids))
+}
+
+get_msigdb_term2gene <- function(category) {
+  cache_key <- paste0("term2gene_", category)
+  cached_value <- cache_get(.msigdb_cache, cache_key)
+  if (!is.null(cached_value)) {
+    return(cached_value)
+  }
+  
+  msigdb_cat <- if (category == "TF") "C3" else "C8"
+  db <- msigdbr::msigdbr(species = "Homo sapiens", category = msigdb_cat)
+  if (category == "TF") {
+    db <- db %>% dplyr::filter(str_starts(gs_subcat, "TFT"))
+  }
+  
+  term2gene <- db %>% dplyr::select(gs_name, gene_symbol) %>% as.data.frame()
+  assign(cache_key, term2gene, envir = .msigdb_cache)
+  term2gene
+}
 
 # --- 2. Global Objects & Helper Functions ---
 # MOFA Globals
-N_FACTORS <- if(exists("MOFA_out")) tryCatch(get_dimensions(MOFA_out)$K, error = function(e) { 15 }) else 15
-VIEWS <- if(exists("MOFA_out")) tryCatch(views_names(MOFA_out), error = function(e) { c("RNA", "protein", "Ubiq") }) else c("RNA", "protein", "Ubiq")
+N_FACTORS <- 15
+VIEWS <- c("RNA", "protein", "Ubiq")
 view_choices <- setNames(VIEWS, case_when(VIEWS == "RNA" ~ "Transcriptome", VIEWS == "protein" ~ "Proteome", VIEWS == "Ubiq" ~ "Ubiquitome", TRUE ~ VIEWS))
 gsea_view_choices <- c("Transcriptome" = "RNA", "Proteome" = "protein", "Ubiquitome" = "Ubiq")
 heatmap_colors <- colorRampPalette(rev(brewer.pal(n = 10, name = "RdBu")))(100)
@@ -321,14 +462,14 @@ find_best_match <- function(target_gene, feature_list) {
 ui <- fluidPage(
   useShinyjs(), # Initialize shinyjs
   
-      # Your original navbarPage UI goes here. It is now wrapped in this hidden div.
-      navbarPage(
-        title = div(img(src = mammoth_icon_url, height = "25px", style = "margin-top: -5px; padding-right: 10px;"), "MAMOTH"),
-        theme = shinytheme("sandstone"),
-        id = "main_nav",
-        
-        tags$head(
-          tags$style(HTML("
+  # Your original navbarPage UI goes here. It is now wrapped in this hidden div.
+  navbarPage(
+    title = div(img(src = mammoth_icon_url, height = "25px", style = "margin-top: -5px; padding-right: 10px;"), "MAMOTH"),
+    theme = shinytheme("sandstone"),
+    id = "main_nav",
+    
+    tags$head(
+      tags$style(HTML("
                     body { color: #545252; }
                     .navbar-default {
                       background-color: #F8F5F0 !important; 
@@ -373,268 +514,268 @@ ui <- fluidPage(
                     }
 
                   "))
-        ),
-        
-        tabPanel("Home",
-                 fluidPage(
-                   fluidRow(
-                     column(12, align = "center", style = "padding-top: 50px;",
-                            tags$h1(
-                              img(src = mammoth_icon_url, height="68px", style = "vertical-align: -4px; margin-right: 20px;"),
-                              "MAMOTH", 
-                              style = "font-size: 72px; font-weight: bold;"
-                            ),
-                            tags$h3("MAGEL2 Multi-Omics Targeting Hubs")
-                     )
-                   ),
+    ),
+    
+    tabPanel("Home",
+             fluidPage(
+               fluidRow(
+                 column(12, align = "center", style = "padding-top: 50px;",
+                        tags$h1(
+                          img(src = mammoth_icon_url, height="68px", style = "vertical-align: -4px; margin-right: 20px;"),
+                          "MAMOTH", 
+                          style = "font-size: 72px; font-weight: bold;"
+                        ),
+                        tags$h3("MAGEL2 Multi-Omics Targeting Hubs")
+                 )
+               ),
+               hr(),
+               fluidRow(
+                 column(10, offset = 1, align = "center",
+                        p("Welcome to the MAMOTH interactive data portal. This application provides tools to explore multi-omics datasets (transcriptome, proteome, and ubiquitome) from human induced pluripotent stem cell (hiPSC)-derived cortical neurons to investigate MAGEL2-associated diseases. Use the navigation panels below or the tabs at the top to access the different viewers.", style = "font-size: 16px;")
+                 )
+               ),
+               br(),
+               fluidRow(
+                 column(3, div(class = "panel", style = "padding: 15px; text-align: center;", actionButton("nav_gene_viewer", label = tagList(h4(icon("dna"), "Gene Expression Viewer")), width = "100%"), p("Visualize the expression of individual genes."))),
+                 column(3, div(class = "panel", style = "padding: 15px; text-align: center;", actionButton("nav_multi_omics", label = tagList(h4(icon("chart-bar"), "Multi-Omics Browser")), width = "100%"), p("Explore differential expression and enrichment results."))),
+                 column(3, div(class = "panel", style = "padding: 15px; text-align: center;", actionButton("nav_mofa", label = tagList(h4(icon("layer-group"), "MOFA Browser")), width = "100%"), p("Deconvolve multi-omic variability."))),
+                 column(3, div(class = "panel", style = "padding: 15px; text-align: center;", actionButton("nav_about", label = tagList(h4(icon("info-circle"), "About")), width = "100%"), p("Learn more about the project and data.")))
+               )
+             )
+    ),
+    
+    tabPanel("Gene expression viewer",
+             fluidPage(
+               sidebarLayout(
+                 sidebarPanel(
+                   width = 3,
+                   h4(""),
+                   selectizeInput("goi", "Enter Gene Symbol", choices = NULL,
+                                  options = list(placeholder = 'Type or select gene...', maxOptions = 10000)),
                    hr(),
-                   fluidRow(
-                     column(10, offset = 1, align = "center",
-                            p("Welcome to the MAMOTH interactive data portal. This application provides tools to explore multi-omics datasets (transcriptome, proteome, and ubiquitome) from human induced pluripotent stem cell (hiPSC)-derived cortical neurons to investigate MAGEL2-associated diseases. Use the navigation panels below or the tabs at the top to access the different viewers.", style = "font-size: 16px;")
-                     )
-                   ),
-                   br(),
-                   fluidRow(
-                     column(3, div(class = "panel", style = "padding: 15px; text-align: center;", actionButton("nav_gene_viewer", label = tagList(h4(icon("dna"), "Gene Expression Viewer")), width = "100%"), p("Visualize the expression of individual genes."))),
-                     column(3, div(class = "panel", style = "padding: 15px; text-align: center;", actionButton("nav_multi_omics", label = tagList(h4(icon("chart-bar"), "Multi-Omics Browser")), width = "100%"), p("Explore differential expression and enrichment results."))),
-                     column(3, div(class = "panel", style = "padding: 15px; text-align: center;", actionButton("nav_mofa", label = tagList(h4(icon("layer-group"), "MOFA Browser")), width = "100%"), p("Deconvolve multi-omic variability."))),
-                     column(3, div(class = "panel", style = "padding: 15px; text-align: center;", actionButton("nav_about", label = tagList(h4(icon("info-circle"), "About")), width = "100%"), p("Learn more about the project and data.")))
-                   )
+                   
+                   tags$label("Select Omics View", class = "control-label"),
+                   checkboxInput("show_trans", "Transcriptome", value = TRUE),
+                   checkboxInput("show_prot", "Proteome", value = TRUE),
+                   checkboxInput("show_ubi", "Ubiquitome", value = TRUE),
+                   
+                   hr(),
+                   helpText("Select a gene to view its expression. Use checkboxes to toggle data types. Significant stars refer to the adjusted p-value compared to WT.")
+                 ),
+                 
+                 mainPanel(
+                   width = 9,
+                   withSpinner(uiOutput("gene_plots_ui"), type = 6, color = "#545252", size = 2)
                  )
-        ),
-        
-        tabPanel("Gene expression viewer",
-                 fluidPage(
-                   sidebarLayout(
-                     sidebarPanel(
-                       width = 3,
-                       h4(""),
-                       selectizeInput("goi", "Enter Gene Symbol", choices = NULL,
-                                      options = list(placeholder = 'Type or select gene...', maxOptions = 10000)),
-                       hr(),
-                       
-                       tags$label("Select Omics View", class = "control-label"),
-                       checkboxInput("show_trans", "Transcriptome", value = TRUE),
-                       checkboxInput("show_prot", "Proteome", value = TRUE),
-                       checkboxInput("show_ubi", "Ubiquitome", value = TRUE),
-                       
-                       hr(),
-                       helpText("Select a gene to view its expression. Use checkboxes to toggle data types. Significant stars refer to the adjusted p-value compared to WT.")
-                     ),
-                     
-                     mainPanel(
-                       width = 9,
-                       withSpinner(uiOutput("gene_plots_ui"), type = 6, color = "#545252", size = 2)
-                     )
-                   )
-                 )
-        ),
-        
-        tabPanel("Multi-Omics Browser",
-                 tabsetPanel(
-                   type = "tabs",
-                   tabPanel("Volcano Plot", 
-                            fluidPage(
-                              br(),
-                              sidebarLayout(
-                                sidebarPanel(
-                                  width = 3,
-                                  selectInput("volcano_group1", "Select Genotype 1:", choices = NULL),
-                                  selectInput("volcano_group2", "Select Genotype 2 (Contrast):", choices = NULL),
-                                  hr(),
-                                  checkboxGroupInput("volcano_omics", "Select Omics Layers:", choices = c("Transcriptome", "Proteome", "Ubiquitome"), selected = c("Transcriptome", "Proteome", "Ubiquitome")),
-                                  hr(),
-                                  helpText("Significant hits (p.adj < 0.05 and |LFC| > 1) are colored red."),
-                                  hr(),
-                                  downloadButton("download_volcano_results", "Download Volcano Results (.xlsx)")
-                                ),
-                                
-                                # --- UI UPDATED HERE ---
-                                mainPanel(
-                                  width = 9,
-                                  # A single spinner now wraps a single UI output
-                                  withSpinner(uiOutput("volcano_plots_ui"), type = 6, color = "#545252", size = 2)
-                                )
-                              )
-                            )
-                   ),
-                   tabPanel("Enrichment Analysis",
-                            fluidPage(
-                              br(),
-                              sidebarLayout(
-                                sidebarPanel(
-                                  width = 3,
-                                  h4(""),
-                                  selectInput("go_omics_type", "Select Omics Layer:", 
-                                              choices = c("Transcriptome", "Proteome", "Ubiquitome")),
-                                  
-                                  # --- UPDATED DROPDOWN ---
-                                  selectInput("go_database", "Select Database:",
-                                              choices = c("GO: Combined (All)" = "ALL",
-                                                          "GO: Biological Process" = "BP",
-                                                          "GO: Cellular Component" = "CC",
-                                                          "GO: Molecular Function" = "MF",
-                                                          "Reactome" = "REAC",
-                                                          "HPO (Human Phenotype)" = "HP",
-                                                          "TF (MSigDB C3)" = "TF",
-                                                          "miRNA (miRTarBase)" = "MIRNA",
-                                                          "Cell Types (MSigDB C8)" = "C8"),
-                                              selected = "BP"),
-                                  
-                                  selectInput("go_background_select", "Select Genetic Background:",
-                                              choices = c("Overlapping Genes (Both)" = "both",
-                                                          "8330 Background" = "8330",
-                                                          "MGH Background" = "MGH")),
-                                  selectInput("go_group1", "Select Genotype 1:", choices = NULL),
-                                  selectInput("go_group2", "Select Genotype 2 (Contrast):", choices = NULL),
-                                  sliderInput("go_n_terms", "Number of Top Terms to Display:", 
-                                              min = 10, max = 100, value = 10, step = 10),
-                                  actionButton("go_run_analysis", "Run Analysis", icon = icon("rocket")),
-                                  hr(),
-                                  helpText("Select an omics layer, database, and comparison to run enrichment analysis. Running the enrichment may take a moment."),
-                                  hr(),
-                                  downloadButton("download_go_results", "Download Enrichment Results (.xlsx)")
-                                ),
-                                mainPanel(
-                                  width = 9,
-                                  fluidRow(
-                                    column(6, withSpinner(uiOutput("go_plot_down_ui"), type = 6, color = "#545252", size = 2)),
-                                    column(6, withSpinner(uiOutput("go_plot_up_ui"), type = 6, color = "#545252", size = 2))
-                                  )
-                                )
-                              )
-                            )
-                   )
-                 )
-        ),
-        
-        tabPanel("MOFA Browser",
-                 tabsetPanel(
-                   type = "tabs",
-                   tabPanel("Overview",
-                            fluidPage(
-                              br(), # Added for spacing
-                              h3("Overview of trained Multi-Omics Factor Analysis (MOFA) Model", align = "center"),
-                              
-                              withSpinner(plotOutput("overview_factor_plot", height="800px"), type = 6, color = "#545252", size = 2),
+               )
+             )
+    ),
+    
+    tabPanel("Multi-Omics Browser",
+             tabsetPanel(
+               type = "tabs",
+               tabPanel("Volcano Plot", 
+                        fluidPage(
+                          br(),
+                          sidebarLayout(
+                            sidebarPanel(
+                              width = 3,
+                              selectInput("volcano_group1", "Select Genotype 1:", choices = NULL),
+                              selectInput("volcano_group2", "Select Genotype 2 (Contrast):", choices = NULL),
                               hr(),
-                              h3("Total Variance Explained", align = "center"), # Also styled this title
-                              withSpinner(plotOutput("plot_variance_group_total"), type = 6, color = "#545252", size = 2)
-                            )
-                   ),
-                   tabPanel("Factor Exploration",
-                            fluidPage(
-                              br(), # Added for spacing
-                              sidebarLayout(
-                                sidebarPanel(
-                                  checkboxGroupInput("factors_to_plot", "Select Factors to Plot:", choices = 1:N_FACTORS, selected = 1:5, inline = TRUE),
-                                  
-                                  # --- CHOICES RENAMED HERE ---
-                                  selectInput("factors_color_by", "Color Samples By:",
-                                              choices = c("Genetic Background" = "Background", 
-                                                          "Genotype" = "Mutation"),
-                                              selected = "Background"),
-                                  
-                                  helpText("Select at least two factors to generate plots.")
-                                ),
-                                mainPanel(
-                                  h3("Factor Scatter Plot Matrix"),
-                                  withSpinner(plotOutput("factor_plot_matrix", height = "600px"), type = 6, color = "#545252", size = 2),
-                                  hr(),
-                                  h3("Factor Correlations"),
-                                  withSpinner(plotOutput("factor_correlation_heatmap"), type = 6, color = "#545252", size = 2)
-                                )
-                              )
-                            )
-                   ),
-                   tabPanel("Feature Weights",
-                            fluidPage(
-                              br(), # Added for spacing
-                              sidebarLayout(
-                                sidebarPanel(selectInput("weights_view", "Select Omics View:", choices = gsea_view_choices), selectInput("weights_factor", "Select Factor:", choices = 1:N_FACTORS, selected = 1), sliderInput("weights_nfeatures", "Number of Top Features:", min = 5, max = 250, value = 10, step = 1)),
-                                mainPanel(withSpinner(uiOutput("plot_top_weights_selected_ui"), type = 6, color = "#545252", size = 2))
-                              )
-                            )
-                   ),
-                   tabPanel("Data Heatmaps",
-                            fluidPage(
-                              br(), # Added for spacing
-                              sidebarLayout(
-                                sidebarPanel(
-                                  width = 3,
-                                  selectInput("heatmap_view", "Select Omics View:", choices = gsea_view_choices),
-                                  selectInput("heatmap_factor", "Select Factor:", choices = 1:N_FACTORS, selected = 1),
-                                  sliderInput("heatmap_nfeatures", "Number of Top Features:", min = 10, max = 100, value = 25, step = 5),
-                                  
-                                  # --- CLUSTERING CHECKBOXES REMOVED ---
-                                  
-                                  checkboxInput("heatmap_show_rownames", "Show Feature Names", value = TRUE),
-                                  checkboxInput("heatmap_show_colnames", "Show Sample Names", value = TRUE)
-                                ),
-                                mainPanel(
-                                  width = 9,
-                                  withSpinner(uiOutput("plot_data_heatmap_selected_ui"), type = 6, color = "#545252", size = 2)
-                                )
-                              )
-                            )
-                   ),
-                   tabPanel("GSEA Enrichment",
-                            fluidPage(
-                              br(), # Added for spacing
-                              sidebarLayout(
-                                sidebarPanel(
-                                  width = 3,
-                                  selectInput("gsea_view", "Select Omics View:", choices = gsea_view_choices),
-                                  selectInput("gsea_factor", "Select Factor:", choices = 1:N_FACTORS, selected = 1),
-                                  selectInput("gsea_database", "Select Gene Set Database:",
-                                              choices = c("Reactome" = "REAC", "Gene Ontology (BP)" = "GO:BP", "Gene Ontology (MF)" = "GO:MF", "Gene Ontology (CC)" = "GO:CC", "Human Phenotype Ontology" = "HP", "MicroRNAs (miRTarBase)" = "MIRNA", "Transcription Factors (TRANSFAC)" = "TF"),
-                                              selected = "REAC"),
-                                  sliderInput("gsea_n_pathways", "Number of Top Pathways:", min = 10, max = 100, value = 10, step = 10),
-                                  hr(),
-                                  actionButton("run_gsea", "Run Analysis", icon = icon("rocket")),
-                                  hr(),
-                                  helpText("Click 'Run Analysis' to fetch results from g:Profiler. This may take a moment."),
-                                  hr(),
-                                  downloadButton("download_gsea_results", "Download GSEA Results (.xlsx)")
-                                ),
-                                mainPanel(
-                                  width = 9,
-
-                                  # --- UI UPDATED HERE ---
-                                  withSpinner(uiOutput("gsea_combined_plot_ui"), type = 6, color = "#545252", size = 2)
-                                )
-                              )
-                            )
-                   )
-                   )
-        ),
-        
-        tabPanel("About",
-                 fluidPage(
-                   id = "about-section", 
-                   titlePanel("About the MAMOTH Application"),
-                   hr(),
-                   fluidRow(
-                     column(8,
-                            h4("General Information"),
-                            p("The MAGEL2 Multi-Omics Targeting Hubs (MAMOTH) application is an interactive, open-access web portal developed to empower the research community and facilitate the exploration of this complex dataset. It provides complete and user-friendly access to the entire transcriptome, proteome, and ubiquitinome datasets presented in the study, enabling researchers to independently visualize findings, test novel hypotheses, and accelerate progress in understanding the molecular basis of MAGEL2-related neurodevelopmental disorders."),
-                            p("The data originates from a comprehensive multi-omics analysis of CRISPR/Cas9-engineered isogenic human pluripotent stem cell (hiPSC)-derived cortical neurons published in the Buecking et al., 2025 preprint."),
+                              checkboxGroupInput("volcano_omics", "Select Omics Layers:", choices = c("Transcriptome", "Proteome", "Ubiquitome"), selected = c("Transcriptome", "Proteome", "Ubiquitome")),
+                              hr(),
+                              helpText("Significant hits (p.adj < 0.05 and |LFC| > 1) are colored red."),
+                              hr(),
+                              downloadButton("download_volcano_results", "Download Volcano Results (.xlsx)")
+                            ),
                             
-                            h4("Background"),
-                            p("Variants in the gene MAGEL2 are associated with the severe neurodevelopmental disorders Prader-Willi Syndrome (PWS) and the more severe Schaaf-Yang Syndrome (SYS), yet the underlying molecular pathophysiology in the human brain remains poorly understood. Despite known links to processes like endosomal trafficking and protein ubiquitination, the specific role of MAGEL2 in human cortical neurons during critical developmental stages has been unclear."),
-                            p("This project addresses this gap by presenting the first integrative multi-omics analysis for MAGEL2-related disorders."),
-                            
-                            h4("Feedback and Contact"),
-                            p("This application is under active development. We welcome any feedback, bug reports, or suggestions for new features. For inquiries, please contact the Laugsch Lab at Heidelberg University."),
-                            p(HTML("<strong>Contact:</strong> <a href='mailto:jannis.buecking@gmail.com'>jannis.buecking@gmail.com</a>")),
-                            p(HTML("<strong>Lab Website:</strong> <a href='https://www.klinikum.uni-heidelberg.de/humangenetik/forschung/ag-laugsch' target='_blank'>Laugsch Lab</a>")),
-                            
-                            h4("Funding"),
-                            p("This project was funded by the Foundation for Prader-Willi Research (FPWR).")
-                      
-                     )
-        )
-      )
+                            # --- UI UPDATED HERE ---
+                            mainPanel(
+                              width = 9,
+                              # A single spinner now wraps a single UI output
+                              withSpinner(uiOutput("volcano_plots_ui"), type = 6, color = "#545252", size = 2)
+                            )
+                          )
+                        )
+               ),
+               tabPanel("Enrichment Analysis",
+                        fluidPage(
+                          br(),
+                          sidebarLayout(
+                            sidebarPanel(
+                              width = 3,
+                              h4(""),
+                              selectInput("go_omics_type", "Select Omics Layer:", 
+                                          choices = c("Transcriptome", "Proteome", "Ubiquitome")),
+                              
+                              # --- UPDATED DROPDOWN ---
+                              selectInput("go_database", "Select Database:",
+                                          choices = c("GO: Combined (All)" = "ALL",
+                                                      "GO: Biological Process" = "BP",
+                                                      "GO: Cellular Component" = "CC",
+                                                      "GO: Molecular Function" = "MF",
+                                                      "Reactome" = "REAC",
+                                                      "HPO (Human Phenotype)" = "HP",
+                                                      "TF (MSigDB C3)" = "TF",
+                                                      "miRNA (miRTarBase)" = "MIRNA",
+                                                      "Cell Types (MSigDB C8)" = "C8"),
+                                          selected = "BP"),
+                              
+                              selectInput("go_background_select", "Select Genetic Background:",
+                                          choices = c("Overlapping Genes (Both)" = "both",
+                                                      "8330 Background" = "8330",
+                                                      "MGH Background" = "MGH")),
+                              selectInput("go_group1", "Select Genotype 1:", choices = NULL),
+                              selectInput("go_group2", "Select Genotype 2 (Contrast):", choices = NULL),
+                              sliderInput("go_n_terms", "Number of Top Terms to Display:", 
+                                          min = 10, max = 100, value = 10, step = 10),
+                              actionButton("go_run_analysis", "Run Analysis", icon = icon("rocket")),
+                              hr(),
+                              helpText("Select an omics layer, database, and comparison to run enrichment analysis. Running the enrichment may take a moment."),
+                              hr(),
+                              downloadButton("download_go_results", "Download Enrichment Results (.xlsx)")
+                            ),
+                            mainPanel(
+                              width = 9,
+                              fluidRow(
+                                column(6, withSpinner(uiOutput("go_plot_down_ui"), type = 6, color = "#545252", size = 2)),
+                                column(6, withSpinner(uiOutput("go_plot_up_ui"), type = 6, color = "#545252", size = 2))
+                              )
+                            )
+                          )
+                        )
+               )
+             )
+    ),
+    
+    tabPanel("MOFA Browser",
+             tabsetPanel(
+               type = "tabs",
+               tabPanel("Overview",
+                        fluidPage(
+                          br(), # Added for spacing
+                          h3("Overview of trained Multi-Omics Factor Analysis (MOFA) Model", align = "center"),
+                          
+                          withSpinner(plotOutput("overview_factor_plot", height="800px"), type = 6, color = "#545252", size = 2),
+                          hr(),
+                          h3("Total Variance Explained", align = "center"), # Also styled this title
+                          withSpinner(plotOutput("plot_variance_group_total"), type = 6, color = "#545252", size = 2)
+                        )
+               ),
+               tabPanel("Factor Exploration",
+                        fluidPage(
+                          br(), # Added for spacing
+                          sidebarLayout(
+                            sidebarPanel(
+                              checkboxGroupInput("factors_to_plot", "Select Factors to Plot:", choices = 1:N_FACTORS, selected = 1:5, inline = TRUE),
+                              
+                              # --- CHOICES RENAMED HERE ---
+                              selectInput("factors_color_by", "Color Samples By:",
+                                          choices = c("Genetic Background" = "Background", 
+                                                      "Genotype" = "Mutation"),
+                                          selected = "Background"),
+                              
+                              helpText("Select at least two factors to generate plots.")
+                            ),
+                            mainPanel(
+                              h3("Factor Scatter Plot Matrix"),
+                              withSpinner(plotOutput("factor_plot_matrix", height = "600px"), type = 6, color = "#545252", size = 2),
+                              hr(),
+                              h3("Factor Correlations"),
+                              withSpinner(plotOutput("factor_correlation_heatmap"), type = 6, color = "#545252", size = 2)
+                            )
+                          )
+                        )
+               ),
+               tabPanel("Feature Weights",
+                        fluidPage(
+                          br(), # Added for spacing
+                          sidebarLayout(
+                            sidebarPanel(selectInput("weights_view", "Select Omics View:", choices = gsea_view_choices), selectInput("weights_factor", "Select Factor:", choices = 1:N_FACTORS, selected = 1), sliderInput("weights_nfeatures", "Number of Top Features:", min = 5, max = 250, value = 10, step = 1)),
+                            mainPanel(withSpinner(uiOutput("plot_top_weights_selected_ui"), type = 6, color = "#545252", size = 2))
+                          )
+                        )
+               ),
+               tabPanel("Data Heatmaps",
+                        fluidPage(
+                          br(), # Added for spacing
+                          sidebarLayout(
+                            sidebarPanel(
+                              width = 3,
+                              selectInput("heatmap_view", "Select Omics View:", choices = gsea_view_choices),
+                              selectInput("heatmap_factor", "Select Factor:", choices = 1:N_FACTORS, selected = 1),
+                              sliderInput("heatmap_nfeatures", "Number of Top Features:", min = 10, max = 100, value = 25, step = 5),
+                              
+                              # --- CLUSTERING CHECKBOXES REMOVED ---
+                              
+                              checkboxInput("heatmap_show_rownames", "Show Feature Names", value = TRUE),
+                              checkboxInput("heatmap_show_colnames", "Show Sample Names", value = TRUE)
+                            ),
+                            mainPanel(
+                              width = 9,
+                              withSpinner(uiOutput("plot_data_heatmap_selected_ui"), type = 6, color = "#545252", size = 2)
+                            )
+                          )
+                        )
+               ),
+               tabPanel("GSEA Enrichment",
+                        fluidPage(
+                          br(), # Added for spacing
+                          sidebarLayout(
+                            sidebarPanel(
+                              width = 3,
+                              selectInput("gsea_view", "Select Omics View:", choices = gsea_view_choices),
+                              selectInput("gsea_factor", "Select Factor:", choices = 1:N_FACTORS, selected = 1),
+                              selectInput("gsea_database", "Select Gene Set Database:",
+                                          choices = c("Reactome" = "REAC", "Gene Ontology (BP)" = "GO:BP", "Gene Ontology (MF)" = "GO:MF", "Gene Ontology (CC)" = "GO:CC", "Human Phenotype Ontology" = "HP", "MicroRNAs (miRTarBase)" = "MIRNA", "Transcription Factors (TRANSFAC)" = "TF"),
+                                          selected = "REAC"),
+                              sliderInput("gsea_n_pathways", "Number of Top Pathways:", min = 10, max = 100, value = 10, step = 10),
+                              hr(),
+                              actionButton("run_gsea", "Run Analysis", icon = icon("rocket")),
+                              hr(),
+                              helpText("Click 'Run Analysis' to fetch results from g:Profiler. This may take a moment."),
+                              hr(),
+                              downloadButton("download_gsea_results", "Download GSEA Results (.xlsx)")
+                            ),
+                            mainPanel(
+                              width = 9,
+                              
+                              # --- UI UPDATED HERE ---
+                              withSpinner(uiOutput("gsea_combined_plot_ui"), type = 6, color = "#545252", size = 2)
+                            )
+                          )
+                        )
+               )
+             )
+    ),
+    
+    tabPanel("About",
+             fluidPage(
+               id = "about-section", 
+               titlePanel("About the MAMOTH Application"),
+               hr(),
+               fluidRow(
+                 column(8,
+                        h4("General Information"),
+                        p("The MAGEL2 Multi-Omics Targeting Hubs (MAMOTH) application is an interactive, open-access web portal developed to empower the research community and facilitate the exploration of this complex dataset. It provides complete and user-friendly access to the entire transcriptome, proteome, and ubiquitinome datasets presented in the study, enabling researchers to independently visualize findings, test novel hypotheses, and accelerate progress in understanding the molecular basis of MAGEL2-related neurodevelopmental disorders."),
+                        p("The data originates from a comprehensive multi-omics analysis of CRISPR/Cas9-engineered isogenic human pluripotent stem cell (hiPSC)-derived cortical neurons published in the Buecking et al., 2025 preprint."),
+                        
+                        h4("Background"),
+                        p("Variants in the gene MAGEL2 are associated with the severe neurodevelopmental disorders Prader-Willi Syndrome (PWS) and the more severe Schaaf-Yang Syndrome (SYS), yet the underlying molecular pathophysiology in the human brain remains poorly understood. Despite known links to processes like endosomal trafficking and protein ubiquitination, the specific role of MAGEL2 in human cortical neurons during critical developmental stages has been unclear."),
+                        p("This project addresses this gap by presenting the first integrative multi-omics analysis for MAGEL2-related disorders."),
+                        
+                        h4("Feedback and Contact"),
+                        p("This application is under active development. We welcome any feedback, bug reports, or suggestions for new features. For inquiries, please contact the Laugsch Lab at Heidelberg University."),
+                        p(HTML("<strong>Contact:</strong> <a href='mailto:jannis.buecking@gmail.com'>jannis.buecking@gmail.com</a>")),
+                        p(HTML("<strong>Lab Website:</strong> <a href='https://www.klinikum.uni-heidelberg.de/humangenetik/forschung/ag-laugsch' target='_blank'>Laugsch Lab</a>")),
+                        
+                        h4("Funding"),
+                        p("This project was funded by the Foundation for Prader-Willi Research (FPWR).")
+                        
+                 )
+               )
+             )
     )
   )
 )
@@ -643,6 +784,25 @@ ui <- fluidPage(
 
 # --- 4. SERVER LOGIC ---
 server <- function(input, output, session) {
+  gene_choices_initialized <- reactiveVal(FALSE)
+  comparison_inputs_initialized <- reactiveVal(FALSE)
+  mofa_controls_initialized <- reactiveVal(FALSE)
+  
+  sync_mofa_controls <- function() {
+    dims <- get_mofa_dimensions()
+    factor_choices <- seq_len(dims$N_FACTORS)
+    selected_factors <- isolate(as.numeric(input$factors_to_plot))
+    selected_factors <- selected_factors[selected_factors %in% factor_choices]
+    if (length(selected_factors) < 2) {
+      selected_factors <- factor_choices[seq_len(min(5, length(factor_choices)))]
+    }
+    
+    updateCheckboxGroupInput(session, "factors_to_plot", choices = factor_choices, selected = selected_factors)
+    updateSelectInput(session, "weights_factor", choices = factor_choices, selected = factor_choices[1])
+    updateSelectInput(session, "heatmap_factor", choices = factor_choices, selected = factor_choices[1])
+    updateSelectInput(session, "gsea_factor", choices = factor_choices, selected = factor_choices[1])
+    mofa_controls_initialized(TRUE)
+  }
   
   # --- Home Page Navigation ---
   observeEvent(input$nav_gene_viewer, { updateNavbarPage(session, "main_nav", selected = "Gene expression viewer") })
@@ -650,19 +810,52 @@ server <- function(input, output, session) {
   observeEvent(input$nav_mofa, { updateNavbarPage(session, "main_nav", selected = "MOFA Browser") })
   observeEvent(input$nav_about, { updateNavbarPage(session, "main_nav", selected = "About") })
   
-  # --- Server Logic for Gene Expression Viewer ---
-  observe({ 
-    updateSelectizeInput(session, "goi", choices = available_gois, selected = "RHOA", server = TRUE) 
-  })
+  observeEvent(input$main_nav, {
+    if (identical(input$main_nav, "Gene expression viewer") && !gene_choices_initialized()) {
+      if (isTRUE(ensure_core_data_loaded())) {
+        updateSelectizeInput(session, "goi", choices = available_gois, selected = "RHOA", server = TRUE)
+        gene_choices_initialized(TRUE)
+      }
+    }
+    
+    if (identical(input$main_nav, "Multi-Omics Browser") && !comparison_inputs_initialized()) {
+      if (isTRUE(ensure_core_data_loaded()) && isTRUE(ensure_secondary_data_loaded())) {
+        choices <- available_conditions
+        selected_g1 <- if ("DupC" %in% choices) "DupC" else choices[1]
+        selected_g2 <- if ("WT" %in% choices) "WT" else if (length(choices) > 1) choices[2] else choices[1]
+        updateSelectInput(session, "volcano_group1", choices = choices, selected = selected_g1)
+        updateSelectInput(session, "volcano_group2", choices = choices, selected = selected_g2)
+        updateSelectInput(session, "go_group1", choices = choices, selected = selected_g1)
+        updateSelectInput(session, "go_group2", choices = choices, selected = selected_g2)
+        comparison_inputs_initialized(TRUE)
+      }
+    }
+    
+    if (identical(input$main_nav, "MOFA Browser") && !mofa_controls_initialized()) {
+      if (isTRUE(ensure_secondary_data_loaded(include_mofa = TRUE))) {
+        sync_mofa_controls()
+      }
+    }
+  }, ignoreInit = TRUE)
   
+  # --- Server Logic for Gene Expression Viewer ---
   plot_colors <- tryCatch({ gg_color_hue(2) }, error = function(e) { c("grey80", "grey70") })
   my_color_8330 <- plot_colors[1]; my_color_MGH <- plot_colors[2]
-
-  render_abundance_plot <- function(data_obj, dep_results_obj, color, label, star_sz = 6, star_v = -0.5, plot_subtitle = "") {
+  
+  render_abundance_plot <- function(data_name, dep_results_name, dep_results_source, color, label, toggle_input, star_sz = 6, star_v = -0.5, plot_subtitle = "") {
     renderPlot({
-      validate(need(data_loaded_flag, "Waiting for data..."), 
-               need(!is.null(master_condition_order), "Condition order not set."),
-               need(!is.null(data_obj), paste(plot_subtitle,"-",label,"data object not loaded.")))
+      req(isTRUE(input[[toggle_input]]))
+      validate(
+        need(isTRUE(ensure_core_data_loaded()), "Waiting for data..."),
+        need(isTRUE(ensure_secondary_data_loaded()), "Waiting for secondary data...")
+      )
+      
+      data_obj <- get_core_object(data_name)
+      dep_results_obj <- if (identical(dep_results_source, "core")) {
+        get_core_object(dep_results_name)
+      } else {
+        get_secondary_object(dep_results_name)
+      }
       
       selected_goi <- input$goi
       validate(need(selected_goi, "Please select a GOI."))
@@ -686,20 +879,32 @@ server <- function(input, output, session) {
                     star_vjust=star_v)
     })
   }
-  output$plotProt8330 <- render_abundance_plot(new_data_imp_8330, dep_8330, my_color_8330, "Prot 8330", plot_subtitle="Proteome")
-  output$plotProtMGH <- render_abundance_plot(new_data_imp_MGH, dep_MGH, my_color_MGH, "Prot MGH", plot_subtitle="Proteome", 5, -0.2)
-  output$plotUbi8330 <- render_abundance_plot(Ubi_data_imp_8330, Ubi_dep_8330, my_color_8330, "Ubi 8330", plot_subtitle="Ubiquitome")
-  output$plotUbiMGH <- render_abundance_plot(Ubi_data_imp_MGH, Ubi_dep_MGH, my_color_MGH, "Ubi MGH", plot_subtitle="Ubiquitome", 5, -0.2)
+  output$plotProt8330 <- render_abundance_plot("new_data_imp_8330", "dep_8330", "core", my_color_8330, "Prot 8330", "show_prot", plot_subtitle = "Proteome")
+  output$plotProtMGH <- render_abundance_plot("new_data_imp_MGH", "dep_MGH", "core", my_color_MGH, "Prot MGH", "show_prot", 5, -0.2, "Proteome")
+  output$plotUbi8330 <- render_abundance_plot("Ubi_data_imp_8330", "Ubi_dep_8330", "core", my_color_8330, "Ubi 8330", "show_ubi", plot_subtitle = "Ubiquitome")
+  output$plotUbiMGH <- render_abundance_plot("Ubi_data_imp_MGH", "Ubi_dep_MGH", "core", my_color_MGH, "Ubi MGH", "show_ubi", 5, -0.2, "Ubiquitome")
   output$plotRna8330 <- renderPlot({
-    validate(need(data_loaded_flag, "Waiting for data..."), need(rna_data_prepared, "Transcriptome data prep failed."),
-             need(!is.null(master_condition_order), "Condition order not set."))
+    req(isTRUE(input$show_trans))
+    validate(
+      need(isTRUE(ensure_core_data_loaded()), "Waiting for data..."),
+      need(isTRUE(ensure_secondary_data_loaded()), "Waiting for secondary data..."),
+      need(rna_data_prepared, "Transcriptome data prep failed.")
+    )
+    dds_RNA_8330 <- get_core_object("dds_RNA_8330")
+    DEG_list_8330 <- get_secondary_object("DEG_list_8330")
     selected_goi <- input$goi; validate(need(selected_goi, "Please select a GOI."))
     plotAbundance(data=dds_RNA_8330, GOI=selected_goi, dep_results=DEG_list_8330, ref_group="WT",
                   plot_color=my_color_8330, data_source_label="Transcriptome", master_order=master_condition_order, star_size=6, star_vjust=-0.5)
   })
   output$plotRnaMGH <- renderPlot({
-    validate(need(data_loaded_flag, "Waiting for data..."), need(rna_data_prepared, "Transcriptome data prep failed."),
-             need(!is.null(master_condition_order), "Condition order not set."))
+    req(isTRUE(input$show_trans))
+    validate(
+      need(isTRUE(ensure_core_data_loaded()), "Waiting for data..."),
+      need(isTRUE(ensure_secondary_data_loaded()), "Waiting for secondary data..."),
+      need(rna_data_prepared, "Transcriptome data prep failed.")
+    )
+    dds_RNA_MGH <- get_core_object("dds_RNA_MGH")
+    DEG_list_MGH <- get_secondary_object("DEG_list_MGH")
     selected_goi <- input$goi; validate(need(selected_goi, "Please select a GOI."))
     plotAbundance(data=dds_RNA_MGH, GOI=selected_goi, dep_results=DEG_list_MGH, ref_group="WT",
                   plot_color=my_color_MGH, data_source_label="Transcriptome", master_order=master_condition_order, star_size=5, star_vjust=-0.2)
@@ -752,14 +957,6 @@ server <- function(input, output, session) {
   })
   
   # --- Server Logic for Volcano Plots ---
-  observe({
-    req(data_loaded_flag, !is.null(available_conditions))
-    choices <- available_conditions
-    selected_g1 <- if ("DupC" %in% choices) "DupC" else choices[1]
-    selected_g2 <- if ("WT" %in% choices) "WT" else if (length(choices) > 1) choices[2] else choices[1]
-    updateSelectInput(session, "volcano_group1", choices = choices, selected = selected_g1)
-    updateSelectInput(session, "volcano_group2", choices = choices, selected = selected_g2)
-  })
   create_volcano_plot <- function(results_df, plot_title) {
     validate(need(is.data.frame(results_df) && nrow(results_df) > 0, "Comparison not available."))
     validate(need(all(c("name", "logFC", "p_adj") %in% names(results_df)), "Results missing required columns."))
@@ -786,9 +983,26 @@ server <- function(input, output, session) {
       )
   }
   volcano_data <- reactive({
-    req(input$volcano_group1, input$volcano_group2, data_loaded_flag)
+    req(input$volcano_group1, input$volcano_group2)
+    validate(
+      need(isTRUE(ensure_core_data_loaded()), "Waiting for data..."),
+      need(isTRUE(ensure_secondary_data_loaded()), "Waiting for secondary data...")
+    )
     validate(need(input$volcano_group1 != input$volcano_group2, "Please select two different groups."))
     g1 <- input$volcano_group1; g2 <- input$volcano_group2
+    cache_key <- paste(g1, g2, sep = "__")
+    cached_result <- cache_get(.volcano_cache, cache_key)
+    if (!is.null(cached_result)) {
+      return(cached_result)
+    }
+    
+    dep_8330 <- get_core_object("dep_8330")
+    dep_MGH <- get_core_object("dep_MGH")
+    Ubi_dep_8330 <- get_core_object("Ubi_dep_8330")
+    Ubi_dep_MGH <- get_core_object("Ubi_dep_MGH")
+    DEG_list_8330 <- get_secondary_object("DEG_list_8330")
+    DEG_list_MGH <- get_secondary_object("DEG_list_MGH")
+    
     process_se_data <- function(se_object) {
       meta <- as.data.frame(rowData(se_object))
       lfc_col <- paste0(g1, "_vs_", g2, "_diff"); padj_col <- paste0(g1, "_vs_", g2, "_p.adj")
@@ -807,35 +1021,35 @@ server <- function(input, output, session) {
       return(data.frame())
     }
     rna_8330_df <- process_deg_list(DEG_list_8330); rna_MGH_df <- process_deg_list(DEG_list_MGH)
-    list(prot_8330=prot_8330_df, prot_MGH=prot_MGH_df, ubi_8330=ubi_8330_df, ubi_MGH=ubi_MGH_df, rna_8330=rna_8330_df, rna_MGH=rna_MGH_df)
+    result <- list(prot_8330=prot_8330_df, prot_MGH=prot_MGH_df, ubi_8330=ubi_8330_df, ubi_MGH=ubi_MGH_df, rna_8330=rna_8330_df, rna_MGH=rna_MGH_df)
+    assign(cache_key, result, envir = .volcano_cache)
+    result
   })
-  output$volcano_prot_8330 <- renderPlot({ create_volcano_plot(volcano_data()$prot_8330, "Proteome - 8330") })
-  output$volcano_prot_MGH  <- renderPlot({ create_volcano_plot(volcano_data()$prot_MGH,  "Proteome - MGH") })
-  output$volcano_ubi_8330  <- renderPlot({ create_volcano_plot(volcano_data()$ubi_8330,  "Ubiquitome - 8330") })
-  output$volcano_ubi_MGH   <- renderPlot({ create_volcano_plot(volcano_data()$ubi_MGH,   "Ubiquitome - MGH") })
-  output$volcano_rna_8330  <- renderPlot({ create_volcano_plot(volcano_data()$rna_8330,  "Transcriptome - 8330") })
-  output$volcano_rna_MGH   <- renderPlot({ create_volcano_plot(volcano_data()$rna_MGH,   "Transcriptome - MGH") })
+  output$volcano_prot_8330 <- renderPlot({ req("Proteome" %in% input$volcano_omics); create_volcano_plot(volcano_data()$prot_8330, "Proteome - 8330") })
+  output$volcano_prot_MGH  <- renderPlot({ req("Proteome" %in% input$volcano_omics); create_volcano_plot(volcano_data()$prot_MGH,  "Proteome - MGH") })
+  output$volcano_ubi_8330  <- renderPlot({ req("Ubiquitome" %in% input$volcano_omics); create_volcano_plot(volcano_data()$ubi_8330,  "Ubiquitome - 8330") })
+  output$volcano_ubi_MGH   <- renderPlot({ req("Ubiquitome" %in% input$volcano_omics); create_volcano_plot(volcano_data()$ubi_MGH,   "Ubiquitome - MGH") })
+  output$volcano_rna_8330  <- renderPlot({ req("Transcriptome" %in% input$volcano_omics); create_volcano_plot(volcano_data()$rna_8330,  "Transcriptome - 8330") })
+  output$volcano_rna_MGH   <- renderPlot({ req("Transcriptome" %in% input$volcano_omics); create_volcano_plot(volcano_data()$rna_MGH,   "Transcriptome - MGH") })
   
   # --- Server Logic for GO Enrichment ---
-  # --- Server Logic for GO Enrichment ---
-  observe({
-    req(data_loaded_flag, !is.null(available_conditions))
-    choices <- available_conditions
-    
-    # --- DEFAULTS UPDATED HERE ---
-    selected_g1 <- if ("DupC" %in% choices) "DupC" else choices[1]
-    selected_g2 <- if ("WT" %in% choices) "WT" else if (length(choices) > 1) choices[2] else choices[1]
-    
-    updateSelectInput(session, "go_group1", choices = choices, selected = selected_g1)
-    updateSelectInput(session, "go_group2", choices = choices, selected = selected_g2)
-  })
   go_results <- eventReactive(input$go_run_analysis, {
     req(input$go_group1 != input$go_group2)
+    validate(
+      need(isTRUE(ensure_core_data_loaded()), "Waiting for data..."),
+      need(isTRUE(ensure_secondary_data_loaded()), "Waiting for secondary data...")
+    )
     
     withProgress(message = 'Running Enrichment Analysis...', value = 0, {
       
       g1 <- input$go_group1; g2 <- input$go_group2; omics <- input$go_omics_type
       bg_select <- input$go_background_select; db_select <- input$go_database
+      DEG_list_8330 <- get_secondary_object("DEG_list_8330")
+      DEG_list_MGH <- get_secondary_object("DEG_list_MGH")
+      dep_8330 <- get_core_object("dep_8330")
+      dep_MGH <- get_core_object("dep_MGH")
+      Ubi_dep_8330 <- get_core_object("Ubi_dep_8330")
+      Ubi_dep_MGH <- get_core_object("Ubi_dep_MGH")
       
       # --- 1. Get Gene Lists ---
       incProgress(0.1, detail = paste("Fetching", tolower(omics), "data"))
@@ -883,32 +1097,27 @@ server <- function(input, output, session) {
       # UPDATED: This function now takes the ontology (BP, CC, MF, or ALL) as an argument
       run_go_analysis <- function(gene_list, ont_selection) {
         if (length(gene_list) == 0) return(NULL)
-        entrez_ids <- bitr(gene_list, fromType = "SYMBOL", toType = "ENTREZID", OrgDb = org.Hs.eg.db)$ENTREZID
+        entrez_ids <- map_symbols_to_entrez(gene_list)
         if (length(entrez_ids) == 0) return(NULL)
         
         # --- CUSTOM UNIVERSE LOGIC REMOVED ---
         # The universe_ids variable will remain NULL
         universe_ids <- NULL
         
-        enrichGO(gene = entrez_ids, universe = universe_ids, OrgDb = org.Hs.eg.db, 
-                 ont = ont_selection, # Use the selection from the UI
-                 pAdjustMethod = "BH", qvalueCutoff = 0.05, readable = TRUE)
+        clusterProfiler::enrichGO(gene = entrez_ids, universe = universe_ids, OrgDb = org.Hs.eg.db::org.Hs.eg.db, 
+                                  ont = ont_selection,
+                                  pAdjustMethod = "BH", qvalueCutoff = 0.05, readable = TRUE)
       }
       
       run_gost_analysis <- function(gene_list, database) {
         if (length(gene_list) < 3) return(NULL)
-        gost(query = gene_list, organism = "hsapiens", sources = database, user_threshold = 0.05, correction_method = "fdr")$result
+        gprofiler2::gost(query = gene_list, organism = "hsapiens", sources = database, user_threshold = 0.05, correction_method = "fdr")$result
       }
       
       run_enricher_analysis <- function(gene_list, category) {
         if (length(gene_list) == 0) return(NULL)
-        msigdb_cat <- if(category == "TF") "C3" else "C8"
-        db <- msigdbr(species = "Homo sapiens", category = msigdb_cat)
-        if (category == "TF") {
-          db <- db %>% dplyr::filter(str_starts(gs_subcat, "TFT"))
-        }
-        term2gene <- db %>% dplyr::select(gs_name, gene_symbol) %>% as.data.frame()
-        enricher(gene = gene_list, TERM2GENE = term2gene, pAdjustMethod = "BH", pvalueCutoff = 0.05)
+        term2gene <- get_msigdb_term2gene(category)
+        clusterProfiler::enricher(gene = gene_list, TERM2GENE = term2gene, pAdjustMethod = "BH", pvalueCutoff = 0.05)
       }
       
       # --- 3. Execute Selected Analysis ---
@@ -933,7 +1142,7 @@ server <- function(input, output, session) {
       list(upregulated = go_up, downregulated = go_down)
     })
   })
-
+  
   create_go_barplot <- function(results_df, direction_label, global_plot_limit) {
     
     color_palette <- if (direction_label == "Overlapping Downregulation") "Blues" else "Reds"
@@ -985,6 +1194,30 @@ server <- function(input, output, session) {
   
   
   
+  extract_enrichment_df <- function(result_object) {
+    if (is.null(result_object)) {
+      return(NULL)
+    }
+    if (is(result_object, "enrichResult")) {
+      return(as.data.frame(result_object@result))
+    }
+    if (is.data.frame(result_object)) {
+      return(result_object)
+    }
+    NULL
+  }
+  
+  compute_enrichment_plot_limit <- function(results) {
+    df_up <- extract_enrichment_df(results$upregulated)
+    df_down <- extract_enrichment_df(results$downregulated)
+    all_results_df <- bind_rows(df_up, df_down)
+    if (nrow(all_results_df) == 0) {
+      return(10)
+    }
+    pval_col <- if ("p.adjust" %in% colnames(all_results_df)) "p.adjust" else "p_value"
+    ceiling(max(-log10(all_results_df[[pval_col]]), na.rm = TRUE))
+  }
+  
   # --- Render UI for DOWNREGULATED plot (for dynamic height) ---
   output$go_plot_down_ui <- renderUI({
     req(input$go_n_terms)
@@ -1000,11 +1233,9 @@ server <- function(input, output, session) {
   output$go_plot_down <- renderPlot({
     results <- go_results()
     validate(need(!is.null(results), "Click 'Run Analysis' to generate results."), 
-             need(!is.null(results$downregulated), "No overlapping downregulated genes found."))
+             need(!is.null(results$downregulated), "No significant terms found for downregulated set."))
     
-    all_results_df <- bind_rows(as.data.frame(results$upregulated), as.data.frame(results$downregulated))
-    global_plot_limit <- if (nrow(all_results_df) > 0) { ceiling(max(-log10(all_results_df$p.adjust), na.rm = TRUE)) } else { 10 }
-    
+    global_plot_limit <- compute_enrichment_plot_limit(results)
     create_go_barplot(results$downregulated, "Overlapping Downregulation", global_plot_limit)
   })
   
@@ -1023,54 +1254,9 @@ server <- function(input, output, session) {
   output$go_plot_up <- renderPlot({
     results <- go_results()
     validate(need(!is.null(results), "Click 'Run Analysis' to generate results."), 
-             need(!is.null(results$upregulated), "No overlapping upregulated genes found."))
-    
-    all_results_df <- bind_rows(as.data.frame(results$upregulated), as.data.frame(results$downregulated))
-    global_plot_limit <- if (nrow(all_results_df) > 0) { ceiling(max(-log10(all_results_df$p.adjust), na.rm = TRUE)) } else { 10 }
-    
-    create_go_barplot(results$upregulated, "Overlapping Upregulation", global_plot_limit)
-  })
-  
-  # --- 1. Render the DOWNREGULATED (Blue) plot ---
-  # --- 1. Render the DOWNREGULATED (Blue) plot ---
-  output$go_plot_down <- renderPlot({
-    results <- go_results()
-    validate(need(!is.null(results), "Click 'Run Analysis' to generate results."), 
-             need(!is.null(results$downregulated), "No significant terms found for downregulated set."))
-    
-    # Handle different result types for global limit
-    df_up <- if(is(results$upregulated, "enrichResult")) as.data.frame(results$upregulated@result) else as.data.frame(results$upregulated)
-    df_down <- if(is(results$downregulated, "enrichResult")) as.data.frame(results$downregulated@result) else as.data.frame(results$downregulated)
-    
-    all_results_df <- bind_rows(df_up, df_down)
-    
-    # Handle different p-value column names
-    pval_col <- if ("p.adjust" %in% colnames(all_results_df)) "p.adjust" else "p_value"
-    
-    global_plot_limit <- if (nrow(all_results_df) > 0) { 
-      ceiling(max(-log10(all_results_df[[pval_col]]), na.rm = TRUE)) 
-    } else { 10 }
-    
-    create_go_barplot(results$downregulated, "Overlapping Downregulation", global_plot_limit)
-  })
-  
-  # --- 2. Render the UPREGULATED (Red) plot ---
-  output$go_plot_up <- renderPlot({
-    results <- go_results()
-    validate(need(!is.null(results), "Click 'Run Analysis' to generate results."), 
              need(!is.null(results$upregulated), "No significant terms found for upregulated set."))
     
-    df_up <- if(is(results$upregulated, "enrichResult")) as.data.frame(results$upregulated@result) else as.data.frame(results$upregulated)
-    df_down <- if(is(results$downregulated, "enrichResult")) as.data.frame(results$downregulated@result) else as.data.frame(results$downregulated)
-    
-    all_results_df <- bind_rows(df_up, df_down)
-    
-    pval_col <- if ("p.adjust" %in% colnames(all_results_df)) "p.adjust" else "p_value"
-    
-    global_plot_limit <- if (nrow(all_results_df) > 0) { 
-      ceiling(max(-log10(all_results_df[[pval_col]]), na.rm = TRUE)) 
-    } else { 10 }
-    
+    global_plot_limit <- compute_enrichment_plot_limit(results)
     create_go_barplot(results$upregulated, "Overlapping Upregulation", global_plot_limit)
   })
   
@@ -1152,21 +1338,76 @@ server <- function(input, output, session) {
       legend.text = element_text(colour = font_color_dark)
     )
   
+  get_cached_mofa_value <- function(cache_key, compute_fn) {
+    cached_value <- cache_get(.mofa_cache, cache_key)
+    if (!is.null(cached_value)) {
+      return(cached_value)
+    }
+    
+    computed_value <- compute_fn()
+    assign(cache_key, computed_value, envir = .mofa_cache)
+    computed_value
+  }
+  
+  mofa_model <- reactive({
+    validate(need(isTRUE(ensure_secondary_data_loaded(include_mofa = TRUE)), "Waiting for MOFA data..."))
+    get_secondary_object("MOFA_out")
+  })
+  
+  get_cached_mofa_metadata <- function(mofa_object) {
+    get_cached_mofa_value("samples_metadata", function() MOFA2::samples_metadata(mofa_object))
+  }
+  
+  get_cached_mofa_factors_df <- function(mofa_object, factors) {
+    cache_key <- paste("factors_df", paste(sort(unique(factors)), collapse = "_"), sep = ":")
+    get_cached_mofa_value(cache_key, function() MOFA2::get_factors(mofa_object, factors = factors, as.data.frame = TRUE))
+  }
+  
+  get_cached_mofa_all_factors_matrix <- function(mofa_object) {
+    get_cached_mofa_value("all_factors_matrix", function() {
+      all_factors_list <- MOFA2::get_factors(mofa_object, factors = "all")
+      do.call(rbind, all_factors_list)
+    })
+  }
+  
+  get_cached_mofa_weights_df <- function(mofa_object, factor, view = NULL) {
+    cache_key <- if (is.null(view)) {
+      paste("weights_df_all", factor, sep = ":")
+    } else {
+      paste("weights_df", view, factor, sep = ":")
+    }
+    
+    get_cached_mofa_value(cache_key, function() {
+      if (is.null(view)) {
+        MOFA2::get_weights(mofa_object, as.data.frame = TRUE, factors = factor)
+      } else {
+        MOFA2::get_weights(mofa_object, as.data.frame = TRUE, views = view, factors = factor)
+      }
+    })
+  }
+  
+  get_cached_mofa_weights_matrix <- function(mofa_object, view) {
+    cache_key <- paste("weights_matrix", view, sep = ":")
+    get_cached_mofa_value(cache_key, function() MOFA2::get_weights(mofa_object, views = view)[[1]])
+  }
+  
+  get_cached_mofa_data_matrix <- function(mofa_object, view) {
+    cache_key <- paste("data_matrix", view, sep = ":")
+    get_cached_mofa_value(cache_key, function() do.call(cbind, mofa_object@data[[view]]))
+  }
+  
   output$overview_factor_plot <- renderPlot({
-    req(mofa_data_loaded)
-    
-    # Extract the values for factors 1 to 15
-    factors_df <- get_factors(MOFA_out, factors = 1:15, as.data.frame = TRUE)
-    
-    # Extract the pre-processed metadata
-    meta_df <- samples_metadata(MOFA_out)
+    mofa_object <- mofa_model()
+    n_factors_to_plot <- min(15, get_mofa_dimensions()$N_FACTORS)
+    factors_df <- get_cached_mofa_factors_df(mofa_object, seq_len(n_factors_to_plot))
+    meta_df <- get_cached_mofa_metadata(mofa_object)
     
     # Combine for plotting
     plot_df <- left_join(factors_df, meta_df, by = "sample")
     
     # Build the single combined plot
     ggplot(plot_df, aes(x = factor, y = value, color = Mutation, shape = Background)) +
-      geom_vline(xintercept = 1:14 + 0.5, linetype = "dashed", color = "grey70") +
+      geom_vline(xintercept = seq_len(max(n_factors_to_plot - 1, 0)) + 0.5, linetype = "dashed", color = "grey70") +
       
       # 1. Increased point size from 3 to 4
       geom_point(position = position_jitterdodge(jitter.width = 0.2, dodge.width = 0.8), size = 8, alpha = 0.8) +
@@ -1191,10 +1432,13 @@ server <- function(input, output, session) {
   })
   
   output$plot_variance_group_total <- renderPlot({ 
-    req(mofa_data_loaded)
-    mofa_tmp <- MOFA_out; mofa_tmp@samples_metadata$group <- mofa_tmp@samples_metadata$Mutation_BG
+    mofa_object <- mofa_model()
     tryCatch({
-      plot_data <- plot_variance_explained(mofa_tmp, x = "group", plot_total = TRUE)[[2]]$data
+      plot_data <- get_cached_mofa_value("variance_group_total", function() {
+        mofa_tmp <- mofa_object
+        mofa_tmp@samples_metadata$group <- mofa_tmp@samples_metadata$Mutation_BG
+        MOFA2::plot_variance_explained(mofa_tmp, x = "group", plot_total = TRUE)[[2]]$data
+      })
       plot_data <- plot_data %>% mutate(Background = str_extract(group, "(8330|MGH)$"), view = factor(view, levels = c("RNA", "protein", "Ubiq")))
       bg_colors <- c("8330" = "grey40", "MGH" = "grey80") 
       
@@ -1216,21 +1460,22 @@ server <- function(input, output, session) {
   })
   
   output$factor_plot_matrix <- renderPlot({ 
-    req(mofa_data_loaded, input$factors_to_plot, input$factors_color_by)
+    mofa_object <- mofa_model()
+    req(input$factors_to_plot, input$factors_color_by)
     factors_to_plot <- as.numeric(input$factors_to_plot)
     color_by_col <- input$factors_color_by
     
     validate(need(length(factors_to_plot) >= 2, "Please select at least two factors."))
     
-    factors_df <- get_factors(MOFA_out, factors = factors_to_plot, as.data.frame = TRUE) %>%
+    factors_df <- get_cached_mofa_factors_df(mofa_object, factors_to_plot) %>%
       tidyr::pivot_wider(id_cols = "sample", names_from = "factor", values_from = "value")
     
-    metadata_df <- MOFA_out@samples_metadata %>%
+    metadata_df <- get_cached_mofa_metadata(mofa_object) %>%
       tibble::rownames_to_column("sample_rn") %>%
       dplyr::select(sample, !!sym(color_by_col))
-      
+    
     plot_df <- dplyr::left_join(factors_df, metadata_df, by = "sample")
-
+    
     # --- DEFINE COLORS AND WRAPPER FUNCTION HERE ---
     
     # 1. Define the correct color palette first
@@ -1240,15 +1485,15 @@ server <- function(input, output, session) {
       # Get the default ggplot colors for the 7 mutation types
       gg_color_hue(n_distinct(plot_df[[color_by_col]]))
     }
-
+    
     # 2. Create a simple wrapper for the correlation function to set the size
     #    ggally_cor is designed to respect the aes(color=...) mapping
     custom_cor <- function(data, mapping, ...) {
-      ggally_cor(data = data, mapping = mapping, size = 3, ...)
+      GGally::ggally_cor(data = data, mapping = mapping, size = 3, ...)
     }
     
     # --- END NEW LOGIC ---
-
+    
     p <- GGally::ggpairs(
       plot_df,
       columns = paste0("Factor", factors_to_plot),
@@ -1257,14 +1502,14 @@ server <- function(input, output, session) {
       # Use the new custom function
       upper = list(continuous = custom_cor), 
       
-      lower = list(continuous = wrap("points", size = 4, alpha = 0.6)),
+      lower = list(continuous = GGally::wrap("points", size = 4, alpha = 0.6)),
       diag = list(continuous = custom_density)
     )
-
+    
     # 3. Apply the correct color palette to all plot components
     p <- p + scale_color_manual(values = my_colors) +
-             scale_fill_manual(values = my_colors)
-
+      scale_fill_manual(values = my_colors)
+    
     p <- p + theme_bw(base_size = 14) +
       theme(
         text = element_text(colour = font_color_dark),
@@ -1275,18 +1520,18 @@ server <- function(input, output, session) {
         legend.text = element_text(size = 12, colour = font_color_dark),
         panel.grid = element_blank()
       )
-      
+    
     print(p)
   })
   
   output$factor_correlation_heatmap <- renderPlot({ 
-    req(mofa_data_loaded, input$factors_to_plot)
+    mofa_object <- mofa_model()
+    req(input$factors_to_plot)
     selected_factors <- as.numeric(input$factors_to_plot)
     validate(need(length(selected_factors) >= 2, "Please select at least two factors."))
     
     # --- Get Correlation Matrix ---
-    all_factors_list <- get_factors(MOFA_out, factors = "all")
-    all_factors_matrix <- do.call(rbind, all_factors_list)
+    all_factors_matrix <- get_cached_mofa_all_factors_matrix(mofa_object)
     full_cor_matrix <- cor(all_factors_matrix)
     cor_matrix_subset <- full_cor_matrix[selected_factors, selected_factors, drop = FALSE]
     
@@ -1334,8 +1579,9 @@ server <- function(input, output, session) {
   
   output$plot_top_weights_selected_ui <- renderUI({ req(input$weights_nfeatures); plotOutput("plot_top_weights_selected", height = paste0(350 + (input$weights_nfeatures * 20), "px")) })
   output$plot_top_weights_selected <- renderPlot({
-    req(mofa_data_loaded, input$weights_view, input$weights_factor, input$weights_nfeatures)
-    weights_df <- get_weights(MOFA_out, as.data.frame = TRUE, views = input$weights_view, factors = as.numeric(input$weights_factor))
+    mofa_object <- mofa_model()
+    req(input$weights_view, input$weights_factor, input$weights_nfeatures)
+    weights_df <- get_cached_mofa_weights_df(mofa_object, factor = as.numeric(input$weights_factor), view = input$weights_view)
     plot_data <- weights_df %>% slice_max(abs(value), n = input$weights_nfeatures) %>% mutate(feature_formatted = format_feature_names(feature), feature_ordered = fct_reorder(feature_formatted, value))
     max_abs_weight <- max(abs(plot_data$value), na.rm = TRUE)
     
@@ -1362,23 +1608,23 @@ server <- function(input, output, session) {
   })
   
   output$plot_data_heatmap_selected <- renderPlot({
-    req(mofa_data_loaded, input$heatmap_view, input$heatmap_factor, input$heatmap_nfeatures)
+    mofa_object <- mofa_model()
+    req(input$heatmap_view, input$heatmap_factor, input$heatmap_nfeatures)
     
     # --- 1. Data Preparation (same as before) ---
-    weights_matrix <- get_weights(MOFA_out, views = input$heatmap_view)[[1]]
+    weights_matrix <- get_cached_mofa_weights_matrix(mofa_object, input$heatmap_view)
     factor_weights <- weights_matrix[, as.numeric(input$heatmap_factor), drop = FALSE]
     top_features_sorted <- factor_weights[order(abs(factor_weights[,1]), decreasing = TRUE), , drop = FALSE]
     features_to_plot <- head(rownames(top_features_sorted), n = input$heatmap_nfeatures)
     
-    data_matrix_list <- MOFA_out@data[[input$heatmap_view]]
-    full_data_matrix <- do.call(cbind, data_matrix_list)
+    full_data_matrix <- get_cached_mofa_data_matrix(mofa_object, input$heatmap_view)
     
     features_in_data <- features_to_plot[features_to_plot %in% rownames(full_data_matrix)]
     if(length(features_in_data) == 0) stop("No matching features found between weights and data.")
     data_matrix_subset <- full_data_matrix[features_in_data, , drop = FALSE]
     
     # --- 2. Z-Score Calculation (same as before) ---
-    col_data <- as.data.frame(MOFA_out@samples_metadata)
+    col_data <- as.data.frame(get_cached_mofa_metadata(mofa_object))
     mgh_cols <- col_data$sample[col_data$Background == "MGH"]
     b8330_cols <- col_data$sample[col_data$Background == "8330"]
     mgh_cols_present <- intersect(mgh_cols, colnames(data_matrix_subset))
@@ -1453,14 +1699,14 @@ server <- function(input, output, session) {
   })
   
   gsea_results_reactive <- eventReactive(input$run_gsea, {
-    req(mofa_data_loaded)
+    mofa_object <- mofa_model()
     TARGET_FACTOR <- as.numeric(input$gsea_factor); SOURCE_GENESET <- input$gsea_database; SELECTED_VIEW <- input$gsea_view
     withProgress(message = 'Running GSEA...', value = 0, {
       incProgress(0.1, detail = "Fetching weights...")
-      all_weights <- get_weights(MOFA_out, factors = TARGET_FACTOR, as.data.frame = TRUE)
+      all_weights <- get_cached_mofa_weights_df(mofa_object, factor = TARGET_FACTOR)
       run_gsea_internal <- function(weights_df, suffix_to_remove) {
         features <- unique(format_feature_names(gsub(suffix_to_remove, "", weights_df$feature))); if (length(features) < 3) return(NULL)
-        gost_result <- gost(query = features, organism = "hsapiens", sources = SOURCE_GENESET, user_threshold = 0.05, correction_method = "fdr")
+        gost_result <- gprofiler2::gost(query = features, organism = "hsapiens", sources = SOURCE_GENESET, user_threshold = 0.05, correction_method = "fdr")
         if (!is.null(gost_result)) { return(gost_result$result %>% group_by(term_name) %>% slice_min(order_by = p_value, n = 1, with_ties = FALSE) %>% ungroup()) } else { return(NULL) }
       }
       incProgress(0.3, detail = paste("Processing view:", SELECTED_VIEW))
@@ -1481,7 +1727,6 @@ server <- function(input, output, session) {
   })
   
   output$gsea_combined_plot <- renderPlot({
-    req(mofa_data_loaded)
     results <- gsea_results_reactive()
     TOP_N_TERMS_PLOT <- input$gsea_n_pathways; TARGET_FACTOR <- as.numeric(input$gsea_factor); SOURCE_GENESET <- input$gsea_database; view_display_name <- names(gsea_view_choices)[gsea_view_choices == input$gsea_view]
     validate(need(!is.null(results), "Click 'Run Analysis' to generate GSEA results."))
@@ -1525,9 +1770,9 @@ server <- function(input, output, session) {
     }
     
     p_pos <- create_gsea_plot_internal(results$positive, "Positive"); p_neg <- create_gsea_plot_internal(results$negative, "Negative")
-    title <- ggdraw() + draw_label(paste(view_display_name, "View - GSEA Results"), fontface = 'bold', x = 0.5, hjust = 0.5, size = 16, colour = font_color_dark)
-    combined_plots <- plot_grid(p_pos, p_neg, ncol = 2, align = 'v')
-    plot_grid(combined_plots, ncol = 1, rel_heights = c(0.1, 1))
+    title <- cowplot::ggdraw() + cowplot::draw_label(paste(view_display_name, "View - GSEA Results"), fontface = 'bold', x = 0.5, hjust = 0.5, size = 16, colour = font_color_dark)
+    combined_plots <- cowplot::plot_grid(p_pos, p_neg, ncol = 2, align = 'v')
+    cowplot::plot_grid(title, combined_plots, ncol = 1, rel_heights = c(0.1, 1))
   })
   
   # --- Download Handler for GSEA Results ---
@@ -1564,3 +1809,4 @@ server <- function(input, output, session) {
 
 # --- 5. Run the Application ---
 shinyApp(ui = ui, server = server)
+
