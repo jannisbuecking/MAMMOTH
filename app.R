@@ -321,27 +321,6 @@ find_best_match <- function(target_gene, feature_list) {
 ui <- fluidPage(
   useShinyjs(), # Initialize shinyjs
   
-  # This div contains the login screen UI
-  div(
-    id = "login_page",
-    style = "width: 500px; max-width: 100%; margin: 0 auto; padding-top: 100px;",
-    wellPanel(
-      h2("MAMOTH Login", class = "text-center", style = "padding-top: 0;"),
-      p("Please enter the password to access the application.", class = "text-center"),
-      passwordInput("password", "Password:"),
-      div(
-        class = "text-center",
-        actionButton("login_button", "Log in")
-      ),
-      textOutput("login_message")
-    )
-  ),
-  
-  # This div will contain the main app UI after successful login
-  # It is hidden by default
-  shinyjs::hidden(
-    div(
-      id = "main_app",
       # Your original navbarPage UI goes here. It is now wrapped in this hidden div.
       navbarPage(
         title = div(img(src = mammoth_icon_url, height = "25px", style = "margin-top: -5px; padding-right: 10px;"), "MAMOTH"),
@@ -429,8 +408,9 @@ ui <- fluidPage(
                    sidebarLayout(
                      sidebarPanel(
                        width = 3,
-                       h4(""), 
-                       selectizeInput("goi", "Enter Gene Symbol", choices = NULL, options = list(placeholder = 'Type or select gene...', maxOptions = 10000)),
+                       h4(""),
+                       selectizeInput("goi", "Enter Gene Symbol", choices = NULL,
+                                      options = list(placeholder = 'Type or select gene...', maxOptions = 10000)),
                        hr(),
                        
                        tags$label("Select Omics View", class = "control-label"),
@@ -442,13 +422,10 @@ ui <- fluidPage(
                        helpText("Select a gene to view its expression. Use checkboxes to toggle data types. Significant stars refer to the adjusted p-value compared to WT.")
                      ),
                      
-                     # --- UI UPDATED HERE ---
                      mainPanel(
                        width = 9,
-                       # A single spinner now wraps a single UI output
                        withSpinner(uiOutput("gene_plots_ui"), type = 6, color = "#545252", size = 2)
                      )
-                     # --- END OF UPDATE ---
                    )
                  )
         ),
@@ -656,8 +633,6 @@ ui <- fluidPage(
                             p("This project was funded by the Foundation for Prader-Willi Research (FPWR).")
                       
                      )
-                   )
-                 )
         )
       )
     )
@@ -668,19 +643,6 @@ ui <- fluidPage(
 
 # --- 4. SERVER LOGIC ---
 server <- function(input, output, session) {
-  
-  USER <- reactiveValues(authenticated = FALSE)
-  
-  observeEvent(input$login_button, {
-    if (input$password == "Mammuthus_primigenius") {
-      USER$authenticated <- TRUE
-      shinyjs::hide("login_page")
-      shinyjs::show("main_app")
-    } else {
-      output$login_message <- renderText("Invalid password.")
-    }
-  })
-  
   
   # --- Home Page Navigation ---
   observeEvent(input$nav_gene_viewer, { updateNavbarPage(session, "main_nav", selected = "Gene expression viewer") })
