@@ -5,7 +5,7 @@ library(shinyjs)
 library(openxlsx)
 library(shinythemes)
 library(DESeq2)
-library(bslib)                
+#library(bslib)                
 library(msigdbr)              # Add this line
 library(ggplot2)
 library(ggrepel)
@@ -15,24 +15,24 @@ library(stringr)
 library(shinycssloaders)
 library(Hmisc)
 library(forcats)
-library(patchwork)
+#library(patchwork)
 library(SummarizedExperiment)
-library(ggpubr)
+#library(ggpubr)
 library(org.Hs.eg.db)
-library(annotate)
-library(AnnotationHub)
-library(grid)
-library(Homo.sapiens)
+#library(annotate)
+#library(AnnotationHub)
+#library(grid)
+#library(Homo.sapiens)
 library(clusterProfiler)
 library(MOFA2)              # For MOFA
 library(tibble)               # For MOFA
-library(viridis)              # For MOFA
+#library(viridis)              # For MOFA
 library(GGally)               # For MOFA
 library(RColorBrewer)         # For MOFA
 library(rlang)                # For MOFA
 library(gprofiler2)           # For MOFA GSEA
 library(cowplot)              # For MOFA GSEA
-library(pheatmap)             # For MOFA Heatmaps
+#library(pheatmap)             # For MOFA Heatmaps
 library(arrow)
 
 mammoth_icon_url <- "mammoth_icon2.png"
