@@ -1,0 +1,11 @@
+*.rds binary
+*.RData binary
+*.arrow binary
+*.png binary
+*.json text
+*.txt text
+*.R text
+*.md text
+*.cff text
+*.tsv text
+

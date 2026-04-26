@@ -1,0 +1,15 @@
+cff-version: 1.2.0
+message: "If you use MAMOTH or the packaged app data, please cite the associated manuscript."
+title: "MAMOTH: MAGEL2 Multi-Omics Targeting Hubs"
+type: software
+authors:
+  - family-names: Buecking
+    given-names: Jannis
+  - family-names: Laugsch
+    given-names: Magdalena
+  - family-names: Schaaf
+    given-names: Christian P.
+repository-code: "https://github.com/jannisbuecking/MAMOTH"
+url: "https://jannisbuecking-mamoth.share.connect.posit.cloud/"
+abstract: "Interactive Shiny web portal for exploring MAGEL2 multi-omics datasets from hiPSC-derived cortical neurons modeling Prader-Willi and Schaaf-Yang syndromes."
+license: MIT
