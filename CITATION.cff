@@ -11,5 +11,7 @@ authors:
     given-names: Christian P.
 repository-code: "https://github.com/jannisbuecking/MAMOTH"
 url: "https://jannisbuecking-mamoth.share.connect.posit.cloud/"
+doi: "10.5281/zenodo.19799681"
 abstract: "Interactive Shiny web portal for exploring MAGEL2 multi-omics datasets from hiPSC-derived cortical neurons modeling Prader-Willi and Schaaf-Yang syndromes."
 license: MIT
+date-released: "2026-04-26"

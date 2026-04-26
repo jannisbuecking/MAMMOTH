@@ -1,5 +1,7 @@
 # MAMOTH
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.19799681.svg)](https://doi.org/10.5281/zenodo.19799681)
+
 **MAMOTH** is the MAGEL2 Multi-Omics Targeting Hubs Shiny application for interactive exploration of transcriptome, proteome, ubiquitome, and MOFA results from:
 
 **Multi-omics profiling reveals convergent MAGEL2-driven defects in human corticogenesis across Prader-Willi and Schaaf-Yang syndromes.**
@@ -11,6 +13,8 @@ Lead contact: Magdalena Laugsch (magdalena.laugsch@uni-heidelberg.de)
 Live app: https://jannisbuecking-mamoth.share.connect.posit.cloud/
 
 Related analysis-code repository: https://github.com/jannisbuecking/Buecking_et_al_2026_MAGEL2_multi-omics
+
+Archived release DOI: https://doi.org/10.5281/zenodo.19799681
 
 ## Repository status
 
@@ -63,4 +67,3 @@ A file-level manifest with sizes, categories, and SHA-256 checksums is available
 Code and scripts are licensed under the MIT License. See `LICENSE`.
 
 Data, processed app objects, and packaged web-app data are intended to be shared under the Creative Commons Attribution 4.0 International License (CC BY 4.0), pending final PI/lab confirmation. See `LICENSE-DATA.md`.
-
