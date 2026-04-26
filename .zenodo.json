@@ -1,0 +1,50 @@
+{
+  "title": "MAMOTH: MAGEL2 Multi-Omics Targeting Hubs",
+  "upload_type": "software",
+  "publication_date": "2026-04-26",
+  "creators": [
+    {"name": "Buecking, Jannis"},
+    {"name": "Gueler, Baran Enes"},
+    {"name": "Eibl, Michael"},
+    {"name": "Syed Ali, Azmal"},
+    {"name": "Walczuch, Tobias"},
+    {"name": "Beschauner, Tobias"},
+    {"name": "Theiss, Susanne"},
+    {"name": "Spanjaard, Melanie"},
+    {"name": "Hinderhofer, Katrin"},
+    {"name": "Herrmann-Sim, Freya"},
+    {"name": "de Esch, Celine E."},
+    {"name": "Tai, Derek J. C."},
+    {"name": "Talkowski, Michael E."},
+    {"name": "Krijgsveld, Jeroen"},
+    {"name": "Schaaf, Christian P."},
+    {"name": "Laugsch, Magdalena"}
+  ],
+  "description": "Interactive Shiny web portal for exploring MAGEL2 multi-omics datasets from hiPSC-derived cortical neurons modeling Prader-Willi and Schaaf-Yang syndromes.",
+  "license": "cc-by-4.0",
+  "keywords": [
+    "MAGEL2",
+    "MAMOTH",
+    "Shiny",
+    "multi-omics",
+    "RNA-seq",
+    "proteomics",
+    "ubiquitinomics",
+    "MOFA",
+    "Prader-Willi syndrome",
+    "Schaaf-Yang syndrome"
+  ],
+  "related_identifiers": [
+    {
+      "identifier": "https://github.com/jannisbuecking/Buecking_et_al_2026_MAGEL2_multi-omics",
+      "relation": "isSupplementTo",
+      "resource_type": "software"
+    },
+    {
+      "identifier": "https://jannisbuecking-mamoth.share.connect.posit.cloud/",
+      "relation": "isIdenticalTo",
+      "resource_type": "publication-other"
+    }
+  ],
+  "notes": "Code and scripts are licensed under the MIT License. Processed app data and packaged web-app data are shared under the Creative Commons Attribution 4.0 International License."
+}
