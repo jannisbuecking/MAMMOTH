@@ -1,4 +1,4 @@
-Session information for MAMOTH Shiny application repository
+Session information for MAMMOTH Shiny application repository
 Generated: 2026-04-26 15:57:27 EDT
 
 R version 4.5.1 (2025-06-13)

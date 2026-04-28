@@ -1,8 +1,8 @@
-# MAMOTH
+# MAMMOTH
 
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.19799681.svg)](https://doi.org/10.5281/zenodo.19799681)
 
-**MAMOTH** is the MAGEL2 Multi-Omics Targeting Hubs Shiny application for interactive exploration of transcriptome, proteome, ubiquitome, and MOFA results from:
+**MAMMOTH** is the MAGEL2 Multi-Modal-Omics Tool Hub Shiny application for interactive exploration of transcriptome, proteome, ubiquitome, and MOFA results from:
 
 **Multi-omics profiling reveals convergent MAGEL2-driven defects in human corticogenesis across Prader-Willi and Schaaf-Yang syndromes.**
 
@@ -18,7 +18,7 @@ Archived release DOI: https://doi.org/10.5281/zenodo.19799681
 
 ## Repository status
 
-This repository contains the source code and packaged data files for the deployed MAMOTH Posit/Shiny web app. The app file layout is intentionally kept flat because Posit deployment and `app.R` expect root-level runtime files and the `data_arrow/` and `www/` directories at their current paths.
+This repository contains the source code and packaged data files for the deployed MAMMOTH Posit/Shiny web app. The app file layout is intentionally kept flat because Posit deployment and `app.R` expect root-level runtime files and the `data_arrow/` and `www/` directories at their current paths.
 
 ## App entrypoints and deployment files
 
@@ -35,7 +35,7 @@ Do not move these files without also updating `app.R` and the Posit deployment c
 
 RNA-seq and mass-spectrometry data have been deposited at GEO and will be publicly available as of the date of publication. Accession numbers will be listed in the key resources table of the associated manuscript.
 
-This repository contains the web portal source code and packaged app data needed to deploy MAMOTH. Any additional information required to re-analyze the data reported in the paper is available from the lead contact upon request.
+This repository contains the web portal source code and packaged app data needed to deploy MAMMOTH. Any additional information required to re-analyze the data reported in the paper is available from the lead contact upon request.
 
 ## Local use
 

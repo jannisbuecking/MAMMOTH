@@ -1,6 +1,6 @@
 # Reproducibility Checklist
 
-This repository contains the deployed MAMOTH Shiny app, app-packaged data objects, and environment metadata.
+This repository contains the deployed MAMMOTH Shiny app, app-packaged data objects, and environment metadata.
 
 ## App-safety note
 
@@ -55,4 +55,3 @@ sink()
 ```
 
 Commit the updated `renv.lock`, `manifest.json` if redeployed, and `session_info/sessionInfo.txt`.
-

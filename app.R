@@ -464,7 +464,7 @@ ui <- fluidPage(
   
   # Your original navbarPage UI goes here. It is now wrapped in this hidden div.
   navbarPage(
-    title = div(img(src = mammoth_icon_url, height = "25px", style = "margin-top: -5px; padding-right: 10px;"), "MAMOTH"),
+    title = div(img(src = mammoth_icon_url, height = "25px", style = "margin-top: -5px; padding-right: 10px;"), "MAMMOTH"),
     theme = shinytheme("sandstone"),
     id = "main_nav",
     
@@ -522,16 +522,16 @@ ui <- fluidPage(
                  column(12, align = "center", style = "padding-top: 50px;",
                         tags$h1(
                           img(src = mammoth_icon_url, height="68px", style = "vertical-align: -4px; margin-right: 20px;"),
-                          "MAMOTH", 
+                          "MAMMOTH", 
                           style = "font-size: 72px; font-weight: bold;"
                         ),
-                        tags$h3("MAGEL2 Multi-Omics Targeting Hubs")
+                        tags$h3("MAGEL2 Multi-Modal-Omics Tool Hub")
                  )
                ),
                hr(),
                fluidRow(
                  column(10, offset = 1, align = "center",
-                        p("Welcome to the MAMOTH interactive data portal. This application provides tools to explore multi-omics datasets (transcriptome, proteome, and ubiquitome) from human induced pluripotent stem cell (hiPSC)-derived cortical neurons to investigate MAGEL2-associated diseases. Use the navigation panels below or the tabs at the top to access the different viewers.", style = "font-size: 16px;")
+                        p("Welcome to the MAMMOTH interactive data portal. This application provides tools to explore multi-omics datasets (transcriptome, proteome, and ubiquitome) from human induced pluripotent stem cell (hiPSC)-derived cortical neurons to investigate MAGEL2-associated diseases. Use the navigation panels below or the tabs at the top to access the different viewers.", style = "font-size: 16px;")
                  )
                ),
                br(),
@@ -753,12 +753,12 @@ ui <- fluidPage(
     tabPanel("About",
              fluidPage(
                id = "about-section", 
-               titlePanel("About the MAMOTH Application"),
+               titlePanel("About the MAMMOTH Application"),
                hr(),
                fluidRow(
                  column(8,
                         h4("General Information"),
-                        p("The MAGEL2 Multi-Omics Targeting Hubs (MAMOTH) application is an interactive, open-access web portal developed to empower the research community and facilitate the exploration of this complex dataset. It provides complete and user-friendly access to the entire transcriptome, proteome, and ubiquitinome datasets presented in the study, enabling researchers to independently visualize findings, test novel hypotheses, and accelerate progress in understanding the molecular basis of MAGEL2-related neurodevelopmental disorders."),
+                        p("The MAGEL2 Multi-Modal-Omics Tool Hub (MAMMOTH) application is an interactive, open-access web portal developed to empower the research community and facilitate the exploration of this complex dataset. It provides complete and user-friendly access to the entire transcriptome, proteome, and ubiquitinome datasets presented in the study, enabling researchers to independently visualize findings, test novel hypotheses, and accelerate progress in understanding the molecular basis of MAGEL2-related neurodevelopmental disorders."),
                         p("The data originates from a comprehensive multi-omics analysis of CRISPR/Cas9-engineered isogenic human pluripotent stem cell (hiPSC)-derived cortical neurons published in the Buecking et al., 2025 preprint."),
                         
                         h4("Background"),
@@ -1809,4 +1809,3 @@ server <- function(input, output, session) {
 
 # --- 5. Run the Application ---
 shinyApp(ui = ui, server = server)
-

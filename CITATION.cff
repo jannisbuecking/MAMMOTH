@@ -1,6 +1,6 @@
 cff-version: 1.2.0
-message: "If you use MAMOTH or the packaged app data, please cite the associated manuscript."
-title: "MAMOTH: MAGEL2 Multi-Omics Targeting Hubs"
+message: "If you use MAMMOTH or the packaged app data, please cite the associated manuscript."
+title: "MAMMOTH: MAGEL2 Multi-Modal-Omics Tool Hub"
 type: software
 authors:
   - family-names: Buecking
