@@ -1,6 +1,6 @@
 # MAMMOTH
 
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.19799681.svg)](https://doi.org/10.5281/zenodo.19799681)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.19799680.svg)](https://doi.org/10.5281/zenodo.19799680)
 
 **MAMMOTH** is the MAGEL2 Multi-Modal-Omics Tool Hub Shiny application for interactive exploration of transcriptome, proteome, ubiquitome, and MOFA results from:
 
@@ -14,7 +14,7 @@ Live app: https://jannisbuecking-mamoth.share.connect.posit.cloud/
 
 Related analysis-code repository: https://github.com/jannisbuecking/Buecking_et_al_2026_MAGEL2_multi-omics
 
-Archived release DOI: https://doi.org/10.5281/zenodo.19799681
+Zenodo concept DOI: https://doi.org/10.5281/zenodo.19799680
 
 ## Repository status
 
