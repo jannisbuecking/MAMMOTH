@@ -14,7 +14,7 @@ Live app: https://jannisbuecking-mamoth.share.connect.posit.cloud/
 
 Related analysis-code repository: https://github.com/jannisbuecking/Buecking_et_al_2026_MAGEL2_multi-omics
 
-Zenodo concept DOI: https://doi.org/10.5281/zenodo.19799680
+Zenodo DOI: https://doi.org/10.5281/zenodo.19799680
 
 ## Repository status
 
